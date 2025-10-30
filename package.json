@@ -61,6 +61,7 @@
     "framer-motion": "^11.13.1",
     "input-otp": "^1.4.2",
     "jsbarcode": "^3.12.1",
+    "jspdf": "^3.0.3",
     "lucide-react": "^0.453.0",
     "memorystore": "^1.6.7",
     "multer": "^2.0.2",
