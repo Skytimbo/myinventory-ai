@@ -1,5 +1,8 @@
-import { type InventoryItem, type InsertInventoryItem } from "@shared/schema";
-import { randomUUID } from "crypto";
+import { type InventoryItem, type InsertInventoryItem, inventoryItems } from "@shared/schema";
+import { neon } from "@neondatabase/serverless";
+import { drizzle } from "drizzle-orm/neon-http";
+import { eq, desc } from "drizzle-orm";
+import type { NeonHttpDatabase } from "drizzle-orm/neon-http";
 
 export interface IStorage {
   getItems(): Promise<InventoryItem[]>;
@@ -8,37 +11,48 @@ export interface IStorage {
   deleteItem(id: string): Promise<boolean>;
 }
 
-export class MemStorage implements IStorage {
-  private items: Map<string, InventoryItem>;
+export class DatabaseStorage implements IStorage {
+  private db: NeonHttpDatabase;
 
   constructor() {
-    this.items = new Map();
+    if (!process.env.DATABASE_URL) {
+      throw new Error("DATABASE_URL environment variable is required");
+    }
+    const sql = neon(process.env.DATABASE_URL);
+    this.db = drizzle(sql);
   }
 
   async getItems(): Promise<InventoryItem[]> {
-    return Array.from(this.items.values()).sort((a, b) => 
-      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    );
+    return await this.db
+      .select()
+      .from(inventoryItems)
+      .orderBy(desc(inventoryItems.createdAt));
   }
 
   async getItem(id: string): Promise<InventoryItem | undefined> {
-    return this.items.get(id);
+    const results = await this.db
+      .select()
+      .from(inventoryItems)
+      .where(eq(inventoryItems.id, id))
+      .limit(1);
+    return results[0];
   }
 
   async createItem(insertItem: InsertInventoryItem): Promise<InventoryItem> {
-    const id = randomUUID();
-    const item: InventoryItem = {
-      ...insertItem,
-      id,
-      createdAt: new Date().toISOString(),
-    };
-    this.items.set(id, item);
-    return item;
+    const results = await this.db
+      .insert(inventoryItems)
+      .values(insertItem)
+      .returning();
+    return results[0];
   }
 
   async deleteItem(id: string): Promise<boolean> {
-    return this.items.delete(id);
+    const result = await this.db
+      .delete(inventoryItems)
+      .where(eq(inventoryItems.id, id))
+      .returning();
+    return result.length > 0;
   }
 }
 
-export const storage = new MemStorage();
+export const storage = new DatabaseStorage();
