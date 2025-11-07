@@ -2,7 +2,7 @@
 
 ## Overview
 
-MyInventory AI is an intelligent inventory management system that leverages AI-powered image recognition to catalog and manage household items. The application enables users to capture photos of items, automatically extract metadata through GPT-5 vision analysis, generate barcodes for tracking, and estimate resale values. Built as a full-stack web application, it combines a React-based frontend with an Express backend and integrates with OpenAI's API for image analysis capabilities.
+MyInventory AI is an intelligent inventory management system that leverages AI-powered image recognition to catalog and manage household items. The application enables users to capture photos of items, automatically extract metadata through GPT-5 vision analysis, generate barcodes for tracking, and estimate resale values with confidence indicators. Built as a full-stack web application, it combines a React-based frontend with an Express backend, persistent PostgreSQL storage, and integrates with OpenAI's API for image analysis capabilities. Features include advanced filtering with date ranges, professional PDF export, and barcode downloads.
 
 ## User Preferences
 
@@ -29,9 +29,11 @@ Preferred communication style: Simple, everyday language.
 - Camera capture using react-webcam for direct photo taking
 - Uppy file uploader integration for batch uploads to object storage
 - JsBarcode library for client-side barcode generation and rendering
-- Real-time search and filtering with category and price range controls
+- Advanced filtering with search, category, price range, and date range (From/To) controls
 - Dashboard with aggregate statistics (total items, value, categories, averages)
+- Professional PDF export with embedded images, barcodes, and item details
 - CSV export functionality for inventory data
+- Barcode download as PNG images for physical label printing
 
 ### Backend Architecture
 
@@ -42,10 +44,11 @@ Preferred communication style: Simple, everyday language.
 - Custom request logging middleware for API endpoint monitoring
 
 **Data Storage Strategy**
-- In-memory storage implementation (MemStorage class) for development
+- PostgreSQL database with Drizzle ORM for persistent storage
 - Database schema defined using Drizzle ORM with PostgreSQL dialect
-- Schema includes inventory items table with fields for name, description, category, tags (array), image URL, barcode data, estimated value, and timestamps
-- Prepared for PostgreSQL integration via Neon serverless database
+- Schema includes inventory items table with fields for name, description, category, tags (array), image URL, barcode data, estimated value, value confidence, value rationale, and timestamps
+- Neon serverless PostgreSQL integration via DATABASE_URL environment variable
+- Type-safe queries using NeonHttpDatabase type
 
 **API Design**
 - RESTful endpoints for inventory CRUD operations:
@@ -64,9 +67,12 @@ Preferred communication style: Simple, everyday language.
   - Item name and detailed description
   - Category classification
   - Searchable tags (3-5 per item)
-  - Estimated resale value in USD
+  - Estimated resale value in USD with market analysis
+  - Value confidence level (low/medium/high)
+  - Value rationale explaining the pricing factors
 - Uses structured JSON output format for consistent parsing
 - Base64 image encoding for API transmission
+- Enhanced prompts with brand recognition, condition assessment, age consideration, market demand, and category-specific guidelines
 
 **Image Analysis Flow**
 1. User captures or uploads image
@@ -84,7 +90,7 @@ Preferred communication style: Simple, everyday language.
 - Object ACL policy system for access control (owner, visibility, permissions)
 
 **Database**
-- Neon serverless PostgreSQL (configured but not yet active)
+- Neon serverless PostgreSQL (active)
 - Connection via @neondatabase/serverless driver
 - Drizzle Kit for schema migrations and database push operations
 
@@ -93,6 +99,9 @@ Preferred communication style: Simple, everyday language.
 - react-webcam for camera access
 - Uppy ecosystem (@uppy/core, @uppy/dashboard, @uppy/aws-s3, @uppy/react) for file uploads
 - jsbarcode for CODE128 barcode generation
+- jsPDF for professional PDF export with embedded images
+- date-fns for immutable date manipulation in filtering
+- react-day-picker for Calendar UI components
 - zod for runtime schema validation
 - nanoid for unique ID generation
 
