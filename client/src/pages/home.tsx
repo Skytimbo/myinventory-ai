@@ -20,6 +20,7 @@ export default function Home() {
   const [showExportModal, setShowExportModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+  const [selectedLocations, setSelectedLocations] = useState<string[]>([]);
   const [valueRange, setValueRange] = useState<[number, number]>([0, 10000]);
   const [dateRange, setDateRange] = useState<[Date | null, Date | null]>([null, null]);
   const { toast } = useToast();
@@ -103,6 +104,7 @@ export default function Home() {
   };
 
   const categories = Array.from(new Set(items.map(item => item.category)));
+  const locations = Array.from(new Set(items.map(item => item.location).filter((loc): loc is string => !!loc)));
   const maxValue = Math.max(...items.map(item => parseFloat(item.estimatedValue || "0")), 1000);
 
   const filteredItems = items.filter(item => {
@@ -111,6 +113,9 @@ export default function Home() {
       item.tags.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase()));
     
     const matchesCategory = selectedCategories.length === 0 || selectedCategories.includes(item.category);
+    
+    const matchesLocation = selectedLocations.length === 0 || 
+      (item.location && selectedLocations.includes(item.location));
     
     const itemValue = parseFloat(item.estimatedValue || "0");
     const matchesValue = itemValue >= valueRange[0] && itemValue <= valueRange[1];
@@ -124,7 +129,7 @@ export default function Home() {
     })();
     const matchesDateRange = matchesDateFrom && matchesDateTo;
     
-    return matchesSearch && matchesCategory && matchesValue && matchesDateRange;
+    return matchesSearch && matchesCategory && matchesLocation && matchesValue && matchesDateRange;
   });
 
   const handleCategoryToggle = (category: string) => {
@@ -135,9 +140,18 @@ export default function Home() {
     );
   };
 
+  const handleLocationToggle = (location: string) => {
+    setSelectedLocations(prev =>
+      prev.includes(location)
+        ? prev.filter(l => l !== location)
+        : [...prev, location]
+    );
+  };
+
   const handleClearFilters = () => {
     setSearchQuery("");
     setSelectedCategories([]);
+    setSelectedLocations([]);
     setValueRange([0, maxValue]);
     setDateRange([null, null]);
   };
@@ -213,6 +227,9 @@ export default function Home() {
             categories={categories}
             selectedCategories={selectedCategories}
             onCategoryToggle={handleCategoryToggle}
+            locations={locations}
+            selectedLocations={selectedLocations}
+            onLocationToggle={handleLocationToggle}
             maxValue={maxValue}
             valueRange={valueRange}
             onValueRangeChange={setValueRange}

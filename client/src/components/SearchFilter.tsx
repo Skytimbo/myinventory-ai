@@ -25,6 +25,9 @@ interface SearchFilterProps {
   categories: string[];
   selectedCategories: string[];
   onCategoryToggle: (category: string) => void;
+  locations: string[];
+  selectedLocations: string[];
+  onLocationToggle: (location: string) => void;
   maxValue: number;
   valueRange: [number, number];
   onValueRangeChange: (range: [number, number]) => void;
@@ -39,6 +42,9 @@ export function SearchFilter({
   categories,
   selectedCategories,
   onCategoryToggle,
+  locations,
+  selectedLocations,
+  onLocationToggle,
   maxValue,
   valueRange,
   onValueRangeChange,
@@ -93,6 +99,29 @@ export function SearchFilter({
                 ))}
               </div>
             </div>
+
+            {locations.length > 0 && (
+              <div className="space-y-3">
+                <Label className="text-sm font-semibold">Location</Label>
+                <div className="space-y-2">
+                  {locations.map((location) => (
+                    <label
+                      key={location}
+                      className="flex items-center gap-2 cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedLocations.includes(location)}
+                        onChange={() => onLocationToggle(location)}
+                        className="w-4 h-4 rounded border-input"
+                        data-testid={`checkbox-location-${location}`}
+                      />
+                      <span className="text-sm line-clamp-1">{location}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {maxValue > 0 && (
               <div className="space-y-3">
