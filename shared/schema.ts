@@ -14,6 +14,7 @@ export const inventoryItems = pgTable("inventory_items", {
   estimatedValue: decimal("estimated_value", { precision: 10, scale: 2 }),
   valueConfidence: text("value_confidence"),
   valueRationale: text("value_rationale"),
+  location: text("location"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 

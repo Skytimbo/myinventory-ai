@@ -62,11 +62,15 @@ export default function Home() {
     },
   });
 
-  const handleImageCapture = async (imageDataUrl: string) => {
+  const handleImageCapture = async (imageDataUrl: string, location?: string) => {
     const formData = new FormData();
     
     const blob = await fetch(imageDataUrl).then(res => res.blob());
     formData.append("image", blob, "capture.jpg");
+    
+    if (location) {
+      formData.append("location", location);
+    }
     
     createItemMutation.mutate(formData);
   };

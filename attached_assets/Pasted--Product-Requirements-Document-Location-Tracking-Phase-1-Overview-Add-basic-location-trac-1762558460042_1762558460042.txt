@@ -1,0 +1,202 @@
+
+⏺ Product Requirements Document: Location Tracking - Phase 1
+
+  Overview
+
+  Add basic location tracking functionality to MyInventory AI, allowing users to specify where items are stored (e.g., "Garage, Box #15")
+  and filter inventory by location.
+
+  Objectives
+
+  - Enable users to tag items with storage location during photo capture
+  - Display location information on item cards
+  - Allow filtering inventory by location
+  - Provide foundation for future location management features
+
+  User Stories
+
+  US-1: Add Location During Item Creation
+
+  As a user, when I'm adding a new item to inventory, I want to specify where it's stored so I can find it later.
+
+  Acceptance Criteria:
+  - Location input field appears on the camera capture screen
+  - Field is optional (can be left blank)
+  - User can type free-form text (e.g., "Garage, Box #15")
+  - Location is saved with the item when photo is analyzed and item is created
+
+  US-2: View Item Location
+
+  As a user, I want to see where each item is stored when viewing my inventory.
+
+  Acceptance Criteria:
+  - Location displays on item cards as a badge/label with location pin icon (📍)
+  - Shows below item image and above or alongside category
+  - If no location is set, nothing displays (field is optional)
+  - Location is visible in mobile and desktop views
+
+  US-3: Filter by Location
+
+  As a user, I want to filter my inventory to show only items in a specific location.
+
+  Acceptance Criteria:
+  - Location filter appears in the existing search/filter panel
+  - Shows all unique locations that have been used
+  - User can select multiple locations (like category filter)
+  - Shows item count next to each location: "Garage, Box #15 (12)"
+  - Clear filters button also clears location filter
+
+  Technical Requirements
+
+  Database Schema Changes
+
+  File: shared/schema.ts
+
+  Add to inventoryItems table:
+  location: text("location"), // Optional, free-form text
+
+  Update TypeScript types to include location field.
+
+  Backend Changes
+
+  File: server/routes.ts
+
+  No changes needed - location field will automatically be included in:
+  - POST /api/items - accepts location in request body
+  - GET /api/items - returns location with each item
+
+  Frontend Changes
+
+  1. Camera Capture Component
+
+  File: client/src/components/CameraCapture.tsx
+
+  Add location input field:
+  - Input field with label "Location (optional)"
+  - Placeholder text: "e.g., Garage, Box #15"
+  - Position: After photo capture buttons, before "Use This Photo" is clicked
+  - State management: const [location, setLocation] = useState("")
+  - Pass location to onImageCapture handler
+
+  2. Home Page
+
+  File: client/src/pages/home.tsx
+
+  Update handleImageCapture:
+  - Accept location parameter
+  - Include in FormData sent to API: formData.append("location", location)
+
+  3. Item Card Component
+
+  File: client/src/components/ItemCard.tsx
+
+  Add location display:
+  - Show location badge if item.location exists
+  - Use MapPin icon from lucide-react
+  - Style as secondary badge or text with icon
+  - Position below image, before or after category badge
+
+  4. Search Filter Component
+
+  File: client/src/components/SearchFilter.tsx
+
+  Add location filter:
+  - Extract unique locations from items array
+  - Filter out null/empty locations
+  - Display as multi-select badges (similar to category filter)
+  - Show item count per location
+  - Add to existing filter logic
+
+  5. Home Page Filter Logic
+
+  File: client/src/pages/home.tsx
+
+  Update filteredItems:
+  - Add state: const [selectedLocations, setSelectedLocations] = useState<string[]>([])
+  - Add location filter logic:
+  const matchesLocation = selectedLocations.length === 0 ||
+    (item.location && selectedLocations.includes(item.location))
+  - Include in filter return statement
+  - Add handleLocationToggle function (similar to handleCategoryToggle)
+  - Clear selected locations in handleClearFilters
+
+  UI/UX Specifications
+
+  Location Input Field:
+  - Label: "Location (optional)"
+  - Placeholder: "e.g., Garage, Box #15"
+  - Type: text input
+  - Max length: 200 characters
+  - Style: Matches existing input fields
+
+  Location Display on Item Card:
+  - Icon: 📍 (MapPin from lucide-react)
+  - Text color: muted-foreground
+  - Font size: small (text-sm)
+  - Position: Below image, in CardContent section
+
+  Location Filter:
+  - Section label: "Location"
+  - Display: Badge pills (like category filter)
+  - Show count: "Location Name (##)"
+  - Sort: Alphabetically
+  - Max visible: Show all (or top 10 with "Show more")
+
+  Non-Goals (Phase 1)
+
+  - Autocomplete from existing locations (Phase 2)
+  - Location management (rename/merge) (Phase 2)
+  - Sticky/remembered location (Phase 2)
+  - GPS coordinates
+  - Hierarchical location structure
+  - QR code scanning for locations
+
+  Testing Requirements
+
+  Manual Testing Checklist
+
+  1. Add item with location → verify location saves
+  2. Add item without location → verify works correctly
+  3. View item card → verify location displays with icon
+  4. Filter by single location → verify correct items show
+  5. Filter by multiple locations → verify OR logic works
+  6. Clear filters → verify location filter clears
+  7. Combine location + category + search filters → verify all work together
+  8. Mobile view → verify location input and display work on small screens
+
+  Edge Cases
+
+  - Very long location names (>50 chars) → should truncate or wrap
+  - Special characters in location → should save/display correctly
+  - Empty/whitespace-only location → treat as null
+
+  Success Metrics
+
+  - Users can successfully add location to items
+  - Location filter reduces inventory list to expected items
+  - No errors or UI breaks with missing/null locations
+  - Feature works on mobile and desktop
+
+  Implementation Notes
+
+  Database Migration
+
+  After updating schema in shared/schema.ts, run:
+  npm run db:push
+
+  This will add the location column to existing inventory_items table. Existing items will have null location (which is fine - optional
+  field).
+
+  Styling Consistency
+
+  Use existing shadcn/ui components:
+  - Input component for location field
+  - Badge component for location display and filters
+  - Follow existing color scheme (muted, secondary variants)
+
+  Code Organization
+
+  Keep changes minimal and follow existing patterns:
+  - Location state management follows category filter pattern
+  - Location display follows category badge pattern
+  - Input field follows existing form field patterns
