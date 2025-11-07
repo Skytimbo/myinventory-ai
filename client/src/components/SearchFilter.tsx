@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Search, SlidersHorizontal, Calendar as CalendarIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   Sheet,
   SheetContent,
@@ -28,6 +29,7 @@ interface SearchFilterProps {
   locations: string[];
   selectedLocations: string[];
   onLocationToggle: (location: string) => void;
+  locationCounts: Record<string, number>;
   maxValue: number;
   valueRange: [number, number];
   onValueRangeChange: (range: [number, number]) => void;
@@ -45,6 +47,7 @@ export function SearchFilter({
   locations,
   selectedLocations,
   onLocationToggle,
+  locationCounts,
   maxValue,
   valueRange,
   onValueRangeChange,
@@ -103,22 +106,23 @@ export function SearchFilter({
             {locations.length > 0 && (
               <div className="space-y-3">
                 <Label className="text-sm font-semibold">Location</Label>
-                <div className="space-y-2">
-                  {locations.map((location) => (
-                    <label
-                      key={location}
-                      className="flex items-center gap-2 cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedLocations.includes(location)}
-                        onChange={() => onLocationToggle(location)}
-                        className="w-4 h-4 rounded border-input"
-                        data-testid={`checkbox-location-${location}`}
-                      />
-                      <span className="text-sm line-clamp-1">{location}</span>
-                    </label>
-                  ))}
+                <div className="flex flex-wrap gap-2">
+                  {locations.map((location) => {
+                    const isSelected = selectedLocations.includes(location);
+                    const count = locationCounts[location] || 0;
+                    return (
+                      <Badge
+                        key={location}
+                        variant={isSelected ? "default" : "outline"}
+                        className="cursor-pointer"
+                        onClick={() => onLocationToggle(location)}
+                        data-testid={`badge-location-${location}`}
+                      >
+                        <span className="line-clamp-1">{location}</span>
+                        <span className="ml-1.5 opacity-70">({count})</span>
+                      </Badge>
+                    );
+                  })}
                 </div>
               </div>
             )}

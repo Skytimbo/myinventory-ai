@@ -105,6 +105,12 @@ export default function Home() {
 
   const categories = Array.from(new Set(items.map(item => item.category)));
   const locations = Array.from(new Set(items.map(item => item.location).filter((loc): loc is string => !!loc)));
+  
+  const locationCounts = locations.reduce((acc, location) => {
+    acc[location] = items.filter(item => item.location === location).length;
+    return acc;
+  }, {} as Record<string, number>);
+  
   const maxValue = Math.max(...items.map(item => parseFloat(item.estimatedValue || "0")), 1000);
 
   const filteredItems = items.filter(item => {
@@ -230,6 +236,7 @@ export default function Home() {
             locations={locations}
             selectedLocations={selectedLocations}
             onLocationToggle={handleLocationToggle}
+            locationCounts={locationCounts}
             maxValue={maxValue}
             valueRange={valueRange}
             onValueRangeChange={setValueRange}
