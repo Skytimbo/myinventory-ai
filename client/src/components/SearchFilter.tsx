@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Search, SlidersHorizontal } from "lucide-react";
+import { Search, SlidersHorizontal, Calendar as CalendarIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -11,6 +11,13 @@ import {
 } from "@/components/ui/sheet";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
+import { Calendar } from "@/components/ui/calendar";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { format } from "date-fns";
 
 interface SearchFilterProps {
   searchQuery: string;
@@ -21,6 +28,8 @@ interface SearchFilterProps {
   maxValue: number;
   valueRange: [number, number];
   onValueRangeChange: (range: [number, number]) => void;
+  dateRange: [Date | null, Date | null];
+  onDateRangeChange: (range: [Date | null, Date | null]) => void;
   onClearFilters: () => void;
 }
 
@@ -33,9 +42,12 @@ export function SearchFilter({
   maxValue,
   valueRange,
   onValueRangeChange,
+  dateRange,
+  onDateRangeChange,
   onClearFilters,
 }: SearchFilterProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [datePickerType, setDatePickerType] = useState<'from' | 'to' | null>(null);
 
   return (
     <div className="flex gap-3">
@@ -98,6 +110,59 @@ export function SearchFilter({
                 />
               </div>
             )}
+
+            <div className="space-y-3">
+              <Label className="text-sm font-semibold">Date Added</Label>
+              <div className="grid grid-cols-2 gap-2">
+                <Popover open={datePickerType === 'from'} onOpenChange={(open) => setDatePickerType(open ? 'from' : null)}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      className="justify-start text-left font-normal"
+                      data-testid="button-date-from"
+                    >
+                      <CalendarIcon className="mr-2 h-4 w-4" />
+                      {dateRange[0] ? format(dateRange[0], "MMM d, yyyy") : "From"}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar
+                      mode="single"
+                      selected={dateRange[0] || undefined}
+                      onSelect={(date) => {
+                        onDateRangeChange([date || null, dateRange[1]]);
+                        setDatePickerType(null);
+                      }}
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
+
+                <Popover open={datePickerType === 'to'} onOpenChange={(open) => setDatePickerType(open ? 'to' : null)}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      className="justify-start text-left font-normal"
+                      data-testid="button-date-to"
+                    >
+                      <CalendarIcon className="mr-2 h-4 w-4" />
+                      {dateRange[1] ? format(dateRange[1], "MMM d, yyyy") : "To"}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar
+                      mode="single"
+                      selected={dateRange[1] || undefined}
+                      onSelect={(date) => {
+                        onDateRangeChange([dateRange[0], date || null]);
+                        setDatePickerType(null);
+                      }}
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
+              </div>
+            </div>
 
             <div className="pt-4 space-y-2">
               <Button

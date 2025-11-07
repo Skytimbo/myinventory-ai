@@ -21,6 +21,7 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [valueRange, setValueRange] = useState<[number, number]>([0, 10000]);
+  const [dateRange, setDateRange] = useState<[Date | null, Date | null]>([null, null]);
   const { toast } = useToast();
 
   const { data: items = [], isLoading } = useQuery<InventoryItem[]>({
@@ -110,7 +111,16 @@ export default function Home() {
     const itemValue = parseFloat(item.estimatedValue || "0");
     const matchesValue = itemValue >= valueRange[0] && itemValue <= valueRange[1];
     
-    return matchesSearch && matchesCategory && matchesValue;
+    const itemDate = new Date(item.createdAt);
+    const matchesDateFrom = !dateRange[0] || itemDate >= dateRange[0];
+    const matchesDateTo = !dateRange[1] || (() => {
+      const endOfDay = new Date(dateRange[1]);
+      endOfDay.setHours(23, 59, 59, 999);
+      return itemDate <= endOfDay;
+    })();
+    const matchesDateRange = matchesDateFrom && matchesDateTo;
+    
+    return matchesSearch && matchesCategory && matchesValue && matchesDateRange;
   });
 
   const handleCategoryToggle = (category: string) => {
@@ -125,6 +135,7 @@ export default function Home() {
     setSearchQuery("");
     setSelectedCategories([]);
     setValueRange([0, maxValue]);
+    setDateRange([null, null]);
   };
 
   if (showCapture) {
@@ -201,6 +212,8 @@ export default function Home() {
             maxValue={maxValue}
             valueRange={valueRange}
             onValueRangeChange={setValueRange}
+            dateRange={dateRange}
+            onDateRangeChange={setDateRange}
             onClearFilters={handleClearFilters}
           />
         </div>
