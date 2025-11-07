@@ -3,7 +3,12 @@ import { InventoryItem } from "@shared/schema";
 import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Pencil, Trash2, Maximize2 } from "lucide-react";
+import { Pencil, Trash2, Maximize2, Info, TrendingUp, TrendingDown, Minus } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import JsBarcode from "jsbarcode";
 
 interface ItemCardProps {
@@ -64,9 +69,34 @@ export function ItemCard({ item, onDelete, onViewBarcode }: ItemCardProps) {
         </div>
 
         {item.estimatedValue && (
-          <p className="text-base font-semibold text-foreground font-mono" data-testid={`text-value-${item.id}`}>
-            ${parseFloat(item.estimatedValue).toFixed(2)}
-          </p>
+          <div className="flex items-center gap-2">
+            <p className="text-base font-semibold text-foreground font-mono" data-testid={`text-value-${item.id}`}>
+              ${parseFloat(item.estimatedValue).toFixed(2)}
+            </p>
+            {item.valueConfidence && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Badge 
+                    variant={
+                      item.valueConfidence === 'high' ? 'default' : 
+                      item.valueConfidence === 'low' ? 'outline' : 
+                      'secondary'
+                    }
+                    className="text-xs cursor-help"
+                    data-testid={`badge-confidence-${item.id}`}
+                  >
+                    {item.valueConfidence === 'high' ? <TrendingUp className="w-3 h-3" /> :
+                     item.valueConfidence === 'low' ? <TrendingDown className="w-3 h-3" /> :
+                     <Minus className="w-3 h-3" />}
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs">
+                  <p className="font-semibold mb-1">Confidence: {item.valueConfidence}</p>
+                  {item.valueRationale && <p className="text-xs">{item.valueRationale}</p>}
+                </TooltipContent>
+              </Tooltip>
+            )}
+          </div>
         )}
 
         <div className="space-y-2">
