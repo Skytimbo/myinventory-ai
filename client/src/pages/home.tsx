@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { InventoryItem } from "@shared/schema";
 import { CameraCapture } from "@/components/CameraCapture";
@@ -103,15 +103,28 @@ export default function Home() {
     }
   };
 
-  const categories = Array.from(new Set(items.map(item => item.category)));
-  const locations = Array.from(new Set(items.map(item => item.location).filter((loc): loc is string => !!loc)));
+  const categories = useMemo(() => 
+    Array.from(new Set(items.map(item => item.category))), 
+    [items]
+  );
   
-  const locationCounts = locations.reduce((acc, location) => {
-    acc[location] = items.filter(item => item.location === location).length;
-    return acc;
-  }, {} as Record<string, number>);
+  const locations = useMemo(() => 
+    Array.from(new Set(items.map(item => item.location).filter((loc): loc is string => !!loc))), 
+    [items]
+  );
   
-  const maxValue = Math.max(...items.map(item => parseFloat(item.estimatedValue || "0")), 1000);
+  const locationCounts = useMemo(() => 
+    locations.reduce((acc, location) => {
+      acc[location] = items.filter(item => item.location === location).length;
+      return acc;
+    }, {} as Record<string, number>), 
+    [locations, items]
+  );
+  
+  const maxValue = useMemo(() => 
+    Math.max(...items.map(item => parseFloat(item.estimatedValue || "0")), 1000), 
+    [items]
+  );
 
   const filteredItems = items.filter(item => {
     const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
