@@ -57,50 +57,19 @@ export const SearchFilter = React.memo(function SearchFilter({
 }: SearchFilterProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [datePickerType, setDatePickerType] = useState<'from' | 'to' | null>(null);
-  const [localSearchQuery, setLocalSearchQuery] = useState(searchQuery);
-  const inputRef = React.useRef<HTMLInputElement>(null);
-  const debounceTimerRef = React.useRef<NodeJS.Timeout | null>(null);
-  
-  React.useEffect(() => {
-    if (searchQuery !== localSearchQuery) {
-      setLocalSearchQuery(searchQuery);
-    }
-  }, [searchQuery]);
-  
-  const handleSearchChange = (value: string) => {
-    setLocalSearchQuery(value);
-    
-    if (debounceTimerRef.current) {
-      clearTimeout(debounceTimerRef.current);
-    }
-    
-    debounceTimerRef.current = setTimeout(() => {
-      onSearchChange(value);
-    }, 300);
-  };
-  
-  React.useEffect(() => {
-    return () => {
-      if (debounceTimerRef.current) {
-        clearTimeout(debounceTimerRef.current);
-      }
-    };
-  }, []);
 
   return (
     <div className="flex gap-3">
       <div className="relative flex-1">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
         <Input
-          ref={inputRef}
           type="text"
           placeholder="Search items..."
-          value={localSearchQuery}
-          onChange={(e) => handleSearchChange(e.target.value)}
+          value={searchQuery}
+          onChange={(e) => onSearchChange(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
               e.preventDefault();
-              e.stopPropagation();
             }
           }}
           className="pl-10"
