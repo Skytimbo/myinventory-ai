@@ -59,15 +59,33 @@ export const SearchFilter = React.memo(function SearchFilter({
   const [datePickerType, setDatePickerType] = useState<'from' | 'to' | null>(null);
   const [localSearchQuery, setLocalSearchQuery] = useState(searchQuery);
   const inputRef = React.useRef<HTMLInputElement>(null);
+  const debounceTimerRef = React.useRef<NodeJS.Timeout | null>(null);
   
   React.useEffect(() => {
-    setLocalSearchQuery(searchQuery);
+    if (searchQuery !== localSearchQuery) {
+      setLocalSearchQuery(searchQuery);
+    }
   }, [searchQuery]);
   
   const handleSearchChange = (value: string) => {
     setLocalSearchQuery(value);
-    onSearchChange(value);
+    
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+    
+    debounceTimerRef.current = setTimeout(() => {
+      onSearchChange(value);
+    }, 300);
   };
+  
+  React.useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
+  }, []);
 
   return (
     <div className="flex gap-3">
