@@ -67,6 +67,11 @@ export function SearchFilter({
           placeholder="Search items..."
           value={searchQuery}
           onChange={(e) => onSearchChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+            }
+          }}
           className="pl-10"
           data-testid="input-search"
         />

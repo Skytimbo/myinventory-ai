@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { InventoryItem } from "@shared/schema";
 import { CameraCapture } from "@/components/CameraCapture";
@@ -126,54 +126,57 @@ export default function Home() {
     [items]
   );
 
-  const filteredItems = items.filter(item => {
-    const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.tags.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase()));
-    
-    const matchesCategory = selectedCategories.length === 0 || selectedCategories.includes(item.category);
-    
-    const matchesLocation = selectedLocations.length === 0 || 
-      (item.location && selectedLocations.includes(item.location));
-    
-    const itemValue = parseFloat(item.estimatedValue || "0");
-    const matchesValue = itemValue >= valueRange[0] && itemValue <= valueRange[1];
-    
-    const itemDate = new Date(item.createdAt);
-    const matchesDateFrom = !dateRange[0] || itemDate >= dateRange[0];
-    const matchesDateTo = !dateRange[1] || (() => {
-      const endOfDay = new Date(dateRange[1]);
-      endOfDay.setHours(23, 59, 59, 999);
-      return itemDate <= endOfDay;
-    })();
-    const matchesDateRange = matchesDateFrom && matchesDateTo;
-    
-    return matchesSearch && matchesCategory && matchesLocation && matchesValue && matchesDateRange;
-  });
+  const filteredItems = useMemo(() => 
+    items.filter(item => {
+      const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        item.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        item.tags.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase()));
+      
+      const matchesCategory = selectedCategories.length === 0 || selectedCategories.includes(item.category);
+      
+      const matchesLocation = selectedLocations.length === 0 || 
+        (item.location && selectedLocations.includes(item.location));
+      
+      const itemValue = parseFloat(item.estimatedValue || "0");
+      const matchesValue = itemValue >= valueRange[0] && itemValue <= valueRange[1];
+      
+      const itemDate = new Date(item.createdAt);
+      const matchesDateFrom = !dateRange[0] || itemDate >= dateRange[0];
+      const matchesDateTo = !dateRange[1] || (() => {
+        const endOfDay = new Date(dateRange[1]);
+        endOfDay.setHours(23, 59, 59, 999);
+        return itemDate <= endOfDay;
+      })();
+      const matchesDateRange = matchesDateFrom && matchesDateTo;
+      
+      return matchesSearch && matchesCategory && matchesLocation && matchesValue && matchesDateRange;
+    }),
+    [items, searchQuery, selectedCategories, selectedLocations, valueRange, dateRange]
+  );
 
-  const handleCategoryToggle = (category: string) => {
+  const handleCategoryToggle = useCallback((category: string) => {
     setSelectedCategories(prev =>
       prev.includes(category)
         ? prev.filter(c => c !== category)
         : [...prev, category]
     );
-  };
+  }, []);
 
-  const handleLocationToggle = (location: string) => {
+  const handleLocationToggle = useCallback((location: string) => {
     setSelectedLocations(prev =>
       prev.includes(location)
         ? prev.filter(l => l !== location)
         : [...prev, location]
     );
-  };
+  }, []);
 
-  const handleClearFilters = () => {
+  const handleClearFilters = useCallback(() => {
     setSearchQuery("");
     setSelectedCategories([]);
     setSelectedLocations([]);
     setValueRange([0, maxValue]);
     setDateRange([null, null]);
-  };
+  }, [maxValue]);
 
   if (showCapture) {
     return (
