@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import { Search, SlidersHorizontal, Calendar as CalendarIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -38,7 +38,7 @@ interface SearchFilterProps {
   onClearFilters: () => void;
 }
 
-export function SearchFilter({
+export const SearchFilter = React.memo(function SearchFilter({
   searchQuery,
   onSearchChange,
   categories,
@@ -57,19 +57,22 @@ export function SearchFilter({
 }: SearchFilterProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [datePickerType, setDatePickerType] = useState<'from' | 'to' | null>(null);
+  const inputRef = React.useRef<HTMLInputElement>(null);
 
   return (
     <div className="flex gap-3">
       <div className="relative flex-1">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
         <Input
-          type="search"
+          ref={inputRef}
+          type="text"
           placeholder="Search items..."
           value={searchQuery}
           onChange={(e) => onSearchChange(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
               e.preventDefault();
+              e.stopPropagation();
             }
           }}
           className="pl-10"
@@ -224,4 +227,4 @@ export function SearchFilter({
       </Sheet>
     </div>
   );
-}
+});
