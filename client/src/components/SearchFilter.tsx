@@ -57,7 +57,17 @@ export const SearchFilter = React.memo(function SearchFilter({
 }: SearchFilterProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [datePickerType, setDatePickerType] = useState<'from' | 'to' | null>(null);
+  const [localSearchQuery, setLocalSearchQuery] = useState(searchQuery);
   const inputRef = React.useRef<HTMLInputElement>(null);
+  
+  React.useEffect(() => {
+    setLocalSearchQuery(searchQuery);
+  }, [searchQuery]);
+  
+  const handleSearchChange = (value: string) => {
+    setLocalSearchQuery(value);
+    onSearchChange(value);
+  };
 
   return (
     <div className="flex gap-3">
@@ -67,8 +77,8 @@ export const SearchFilter = React.memo(function SearchFilter({
           ref={inputRef}
           type="text"
           placeholder="Search items..."
-          value={searchQuery}
-          onChange={(e) => onSearchChange(e.target.value)}
+          value={localSearchQuery}
+          onChange={(e) => handleSearchChange(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
               e.preventDefault();
