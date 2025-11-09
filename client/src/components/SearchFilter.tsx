@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useMemo, useEffect } from "react";
+import { debounce } from "lodash-es";
 import { Search, SlidersHorizontal, Calendar as CalendarIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -48,6 +49,35 @@ export function SearchFilter({
 }: SearchFilterProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [datePickerType, setDatePickerType] = useState<'from' | 'to' | null>(null);
+  const [inputValue, setInputValue] = useState(searchQuery);
+
+  // Memoize debounced function with stable callback identity
+  const debouncedSearch = useMemo(
+    () => debounce((value: string) => {
+      onSearchChange(value);
+
+      // Telemetry instrumentation (dev-only, will be implemented in 3.6)
+      if (process.env.NODE_ENV !== 'production') {
+        // effectiveSearches counter will be added in task 3.6
+      }
+    }, 300, {
+      leading: false,
+      trailing: true
+    }),
+    [onSearchChange]
+  );
+
+  // Cancel debounced function on unmount
+  useEffect(() => {
+    return () => {
+      debouncedSearch.cancel();
+    };
+  }, [debouncedSearch]);
+
+  // Sync inputValue when searchQuery changes externally (e.g., clear filters)
+  useEffect(() => {
+    setInputValue(searchQuery);
+  }, [searchQuery]);
 
   return (
     <div className="flex gap-3">
@@ -56,11 +86,26 @@ export function SearchFilter({
         <Input
           type="search"
           placeholder="Search items..."
-          value={searchQuery}
-          onChange={(e) => onSearchChange(e.target.value)}
+          value={inputValue}
+          onChange={(e) => {
+            const newValue = e.target.value;
+            setInputValue(newValue);
+            debouncedSearch(newValue);
+
+            // Telemetry instrumentation (dev-only, will be implemented in 3.6)
+            if (process.env.NODE_ENV !== 'production') {
+              // searchInvocations counter will be added in task 3.6
+            }
+          }}
           className="pl-10"
           data-testid="input-search"
         />
+        {/* Optional: Show "Searching..." indicator during debounce */}
+        {inputValue !== searchQuery && inputValue.length > 0 && (
+          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-500 animate-pulse">
+            Searching...
+          </span>
+        )}
       </div>
       <Sheet open={isOpen} onOpenChange={setIsOpen}>
         <SheetTrigger asChild>

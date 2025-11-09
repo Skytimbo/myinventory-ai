@@ -1,0 +1,55 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  guard-pm:
+    name: Guard Package Manager
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for forbidden lockfiles
+        run: test ! -f package-lock.json && test ! -f yarn.lock
+
+      - name: Enable corepack and prepare pnpm
+        run: corepack enable && corepack prepare pnpm@10.20.0 --activate
+
+      - name: Verify pnpm version
+        run: pnpm --version
+
+  test:
+    name: Run Tests
+    needs: guard-pm
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL_TEST: ${{ secrets.DATABASE_URL_TEST || 'postgresql://test:test@localhost:5432/test' }}
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable corepack and prepare pnpm
+        run: corepack enable && corepack prepare pnpm@10.20.0 --activate
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Reset and seed test database
+        run: pnpm db:reset && pnpm db:seed
+
+      - name: Run server tests
+        run: pnpm --filter server test
+
+      - name: Run client tests
+        run: pnpm --filter client test
+
+      - name: Run e2e tests
+        run: pnpm e2e
+
+      - name: Upload Playwright traces on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: playwright-report/
+          retention-days: 7
