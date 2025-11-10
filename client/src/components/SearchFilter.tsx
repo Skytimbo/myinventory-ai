@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { debounce } from "lodash-es";
 import { Search, SlidersHorizontal, Calendar as CalendarIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -51,14 +51,28 @@ export function SearchFilter({
   const [datePickerType, setDatePickerType] = useState<'from' | 'to' | null>(null);
   const [inputValue, setInputValue] = useState(searchQuery);
 
+  // Dev-only telemetry counters
+  const telemetryRef = useRef({
+    searchInvocations: 0,
+    effectiveSearches: 0,
+  });
+
   // Memoize debounced function with stable callback identity
   const debouncedSearch = useMemo(
     () => debounce((value: string) => {
       onSearchChange(value);
 
-      // Telemetry instrumentation (dev-only, will be implemented in 3.6)
+      // Telemetry instrumentation (dev-only)
       if (process.env.NODE_ENV !== 'production') {
-        // effectiveSearches counter will be added in task 3.6
+        telemetryRef.current.effectiveSearches++;
+        const ratio = telemetryRef.current.searchInvocations > 0
+          ? (telemetryRef.current.effectiveSearches / telemetryRef.current.searchInvocations).toFixed(2)
+          : '0.00';
+        console.debug('[Telemetry] Search debounce ratio:', {
+          invocations: telemetryRef.current.searchInvocations,
+          effective: telemetryRef.current.effectiveSearches,
+          ratio,
+        });
       }
     }, 300, {
       leading: false,
@@ -92,9 +106,9 @@ export function SearchFilter({
             setInputValue(newValue);
             debouncedSearch(newValue);
 
-            // Telemetry instrumentation (dev-only, will be implemented in 3.6)
+            // Telemetry instrumentation (dev-only)
             if (process.env.NODE_ENV !== 'production') {
-              // searchInvocations counter will be added in task 3.6
+              telemetryRef.current.searchInvocations++;
             }
           }}
           className="pl-10"

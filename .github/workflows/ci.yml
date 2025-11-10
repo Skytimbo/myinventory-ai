@@ -34,14 +34,17 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+
       - name: Reset and seed test database
         run: pnpm db:reset && pnpm db:seed
 
       - name: Run server tests
-        run: pnpm --filter server test
+        run: pnpm test:server
 
       - name: Run client tests
-        run: pnpm --filter client test
+        run: pnpm test:client
 
       - name: Run e2e tests
         run: pnpm e2e

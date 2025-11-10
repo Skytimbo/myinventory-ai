@@ -16,7 +16,11 @@
     "check": "tsc",
     "db:push": "drizzle-kit push",
     "db:reset": "tsx scripts/db-reset.ts",
-    "db:seed": "tsx scripts/db-seed.ts"
+    "db:seed": "tsx scripts/db-seed.ts",
+    "test": "pnpm test:server && pnpm test:client",
+    "test:server": "vitest run --config server/vitest.config.ts",
+    "test:client": "vitest run --config vite.config.ts",
+    "e2e": "playwright test"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.17.2",

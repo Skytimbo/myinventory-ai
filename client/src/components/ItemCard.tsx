@@ -27,6 +27,9 @@ export function ItemCard({ item, onDelete, onViewBarcode }: ItemCardProps) {
   const [imageLoading, setImageLoading] = useState(true);
   const [imageRevision, setImageRevision] = useState(0);
 
+  // Dev-only telemetry
+  const imageRetryCountRef = useRef(0);
+
   useEffect(() => {
     if (barcodeRef.current && !barcodeGenerated) {
       try {
@@ -57,7 +60,17 @@ export function ItemCard({ item, onDelete, onViewBarcode }: ItemCardProps) {
             src={`${item.imageUrl}?rev=${imageRevision}`}
             alt={item.name || 'Item image'}
             loading="lazy"
-            onLoad={() => setImageLoading(false)}
+            onLoad={() => {
+              setImageLoading(false);
+              // Telemetry: Log successful retry
+              if (process.env.NODE_ENV !== 'production' && imageRetryCountRef.current > 0) {
+                console.debug('[Telemetry] Image retry success:', {
+                  itemId: item.id,
+                  retryCount: imageRetryCountRef.current,
+                  revision: imageRevision,
+                });
+              }
+            }}
             onError={() => {
               setImageError(true);
               setImageLoading(false);
@@ -89,6 +102,15 @@ export function ItemCard({ item, onDelete, onViewBarcode }: ItemCardProps) {
                 setImageError(false);
                 setImageLoading(true);
                 setImageRevision(r => r + 1); // Cache-busting
+
+                // Telemetry: Track retry attempt
+                if (process.env.NODE_ENV !== 'production') {
+                  imageRetryCountRef.current++;
+                  console.debug('[Telemetry] Image retry attempt:', {
+                    itemId: item.id,
+                    retryCount: imageRetryCountRef.current,
+                  });
+                }
               }}
               data-testid={`button-retry-${item.id}`}
             >
