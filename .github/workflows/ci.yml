@@ -22,22 +22,57 @@ jobs:
     name: Server Tests
     needs: guard-pm
     runs-on: ubuntu-latest
-    env:
-      DATABASE_URL_TEST: ${{ secrets.DATABASE_URL_TEST || 'postgresql://test:test@localhost:5432/test' }}
-      NODE_ENV: test
+    services:
+      postgres:
+        image: postgres:16
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        options: >-
+          --health-cmd="pg_isready -U postgres -h localhost"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
     steps:
       - uses: actions/checkout@v4
 
       - name: Enable corepack and prepare pnpm
         run: corepack enable && corepack prepare pnpm@10.20.0 --activate
 
+      - name: Verify pnpm version
+        run: pnpm --version
+
       - name: Install dependencies
         run: pnpm install
 
+      - name: Install psql client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Wait for Postgres
+        run: |
+          until pg_isready -h localhost -p 5432 -U postgres; do
+            echo "Waiting for postgres..."
+            sleep 2
+          done
+
+      - name: Create test database
+        run: psql -h localhost -U postgres -c "CREATE DATABASE test;"
+        env:
+          PGPASSWORD: postgres
+
       - name: Reset and seed test database
+        env:
+          DATABASE_URL_TEST: postgresql://postgres:postgres@localhost:5432/test
+          NODE_ENV: test
         run: pnpm db:reset && pnpm db:seed
 
       - name: Run server tests
+        env:
+          DATABASE_URL_TEST: postgresql://postgres:postgres@localhost:5432/test
+          NODE_ENV: test
         run: pnpm test:server
 
   test-client:
@@ -60,9 +95,20 @@ jobs:
     name: E2E Tests
     needs: [test-server, test-client]
     runs-on: ubuntu-latest
-    env:
-      DATABASE_URL_TEST: ${{ secrets.DATABASE_URL_TEST || 'postgresql://test:test@localhost:5432/test' }}
-      NODE_ENV: test
+    services:
+      postgres:
+        image: postgres:16
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        options: >-
+          --health-cmd="pg_isready -U postgres -h localhost"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
     steps:
       - uses: actions/checkout@v4
 
@@ -75,16 +121,37 @@ jobs:
       - name: Install Playwright browsers
         run: pnpm exec playwright install --with-deps chromium
 
-      - name: Reset and seed test database
-        run: pnpm db:reset && pnpm db:seed
+      - name: Install psql client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
 
-      - name: Run e2e tests
+      - name: Wait for Postgres
+        run: |
+          until pg_isready -h localhost -p 5432 -U postgres; do
+            echo "Waiting for postgres..."
+            sleep 2
+          done
+
+      - name: Create test database
+        run: psql -h localhost -U postgres -c "CREATE DATABASE test;"
+        env:
+          PGPASSWORD: postgres
+
+      - name: Seed DB for E2E
+        env:
+          DATABASE_URL_TEST: postgresql://postgres:postgres@localhost:5432/test
+          NODE_ENV: test
+        run: |
+          pnpm db:reset
+          pnpm db:seed
+
+      - name: Run Playwright
+        env:
+          DATABASE_URL_TEST: postgresql://postgres:postgres@localhost:5432/test
+          NODE_ENV: test
         run: pnpm e2e
 
       - name: Upload Playwright traces on failure
         if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-traces
-          path: playwright-report/
-          retention-days: 7
+        run: |
+          tar -czf playwright-traces.tar.gz playwright-report || true
+          ls -l playwright-traces.tar.gz || true
