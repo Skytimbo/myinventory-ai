@@ -37,6 +37,7 @@ async function resetDatabase() {
         estimated_value DECIMAL(10, 2),
         value_confidence TEXT,
         value_rationale TEXT,
+        location TEXT,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
     `);
