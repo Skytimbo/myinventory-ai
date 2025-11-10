@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
+import { debounce } from "lodash-es";
 import { Search, SlidersHorizontal, Calendar as CalendarIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -57,6 +58,49 @@ export const SearchFilter = React.memo(function SearchFilter({
 }: SearchFilterProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [datePickerType, setDatePickerType] = useState<'from' | 'to' | null>(null);
+  const [inputValue, setInputValue] = useState(searchQuery);
+
+  // Dev-only telemetry counters
+  const telemetryRef = useRef({
+    searchInvocations: 0,
+    effectiveSearches: 0,
+  });
+
+  // Memoize debounced function with stable callback identity
+  const debouncedSearch = useMemo(
+    () => debounce((value: string) => {
+      onSearchChange(value);
+
+      // Telemetry instrumentation (dev-only)
+      if (process.env.NODE_ENV !== 'production') {
+        telemetryRef.current.effectiveSearches++;
+        const ratio = telemetryRef.current.searchInvocations > 0
+          ? (telemetryRef.current.effectiveSearches / telemetryRef.current.searchInvocations).toFixed(2)
+          : '0.00';
+        console.debug('[Telemetry] Search debounce ratio:', {
+          invocations: telemetryRef.current.searchInvocations,
+          effective: telemetryRef.current.effectiveSearches,
+          ratio,
+        });
+      }
+    }, 300, {
+      leading: false,
+      trailing: true
+    }),
+    [onSearchChange]
+  );
+
+  // Cancel debounced function on unmount
+  useEffect(() => {
+    return () => {
+      debouncedSearch.cancel();
+    };
+  }, [debouncedSearch]);
+
+  // Sync inputValue when searchQuery changes externally (e.g., clear filters)
+  useEffect(() => {
+    setInputValue(searchQuery);
+  }, [searchQuery]);
 
   return (
     <div className="flex gap-3">
@@ -65,8 +109,17 @@ export const SearchFilter = React.memo(function SearchFilter({
         <Input
           type="text"
           placeholder="Search items..."
-          value={searchQuery}
-          onChange={(e) => onSearchChange(e.target.value)}
+          value={inputValue}
+          onChange={(e) => {
+            const newValue = e.target.value;
+            setInputValue(newValue);
+            debouncedSearch(newValue);
+
+            // Telemetry instrumentation (dev-only)
+            if (process.env.NODE_ENV !== 'production') {
+              telemetryRef.current.searchInvocations++;
+            }
+          }}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
               e.preventDefault();
@@ -75,6 +128,12 @@ export const SearchFilter = React.memo(function SearchFilter({
           className="pl-10"
           data-testid="input-search"
         />
+        {/* Optional: Show "Searching..." indicator during debounce */}
+        {inputValue !== searchQuery && inputValue.length > 0 && (
+          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-500 animate-pulse">
+            Searching...
+          </span>
+        )}
       </div>
       <Sheet open={isOpen} onOpenChange={setIsOpen}>
         <SheetTrigger asChild>

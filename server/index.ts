@@ -1,6 +1,8 @@
+import 'dotenv/config';
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
+import { ApiError } from "./errors";
 
 const app = express();
 
@@ -49,12 +51,42 @@ app.use((req, res, next) => {
 (async () => {
   const server = await registerRoutes(app);
 
-  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
+  // Error handling middleware
+  const isProd = process.env.NODE_ENV === 'production';
 
-    res.status(status).json({ message });
-    throw err;
+  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+    // Handle ApiError instances
+    if (err instanceof ApiError) {
+      return res.status(err.status).json({
+        error: err.message,
+        code: err.code
+      });
+    }
+
+    // Handle Zod validation errors (hide details in production)
+    if (err?.issues?.length) {
+      return res.status(400).json({
+        error: 'Invalid request',
+        code: 'VALIDATION_ERROR',
+        ...(isProd ? {} : { details: err.issues })
+      });
+    }
+
+    // Handle OpenAI/upstream SDK errors (normalize messages)
+    if (err?.status && err?.message && err?.name?.includes('OpenAI')) {
+      return res.status(err.status).json({
+        error: 'Upstream AI error',
+        code: 'UPSTREAM_AI'
+      });
+    }
+
+    // Unhandled errors
+    console.error('Unhandled error:', err);
+    const status = err.status || err.statusCode || 500;
+    res.status(status).json({
+      error: isProd ? 'Internal Server Error' : err.message || 'Internal Server Error',
+      code: 'UNHANDLED'
+    });
   });
 
   // importantly only setup vite in development and after
@@ -71,11 +103,7 @@ app.use((req, res, next) => {
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || '5000', 10);
-  server.listen({
-    port,
-    host: "0.0.0.0",
-    reusePort: true,
-  }, () => {
+  server.listen(port, "0.0.0.0", () => {
     log(`serving on port ${port}`);
   });
 })();

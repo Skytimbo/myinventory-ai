@@ -3,7 +3,8 @@ import { InventoryItem } from "@shared/schema";
 import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Pencil, Trash2, Maximize2, Info, TrendingUp, TrendingDown, Minus, MapPin } from "lucide-react";
+import { Pencil, Trash2, Maximize2, Info, TrendingUp, TrendingDown, Minus, ImageIcon, MapPin } from "lucide-react";
+import { cn } from "@/lib/utils";
 import {
   Tooltip,
   TooltipContent,
@@ -20,6 +21,14 @@ interface ItemCardProps {
 export function ItemCard({ item, onDelete, onViewBarcode }: ItemCardProps) {
   const barcodeRef = useRef<HTMLCanvasElement>(null);
   const [barcodeGenerated, setBarcodeGenerated] = useState(false);
+
+  // Image loading state
+  const [imageError, setImageError] = useState(false);
+  const [imageLoading, setImageLoading] = useState(true);
+  const [imageRevision, setImageRevision] = useState(0);
+
+  // Dev-only telemetry
+  const imageRetryCountRef = useRef(0);
 
   useEffect(() => {
     if (barcodeRef.current && !barcodeGenerated) {
@@ -39,13 +48,76 @@ export function ItemCard({ item, onDelete, onViewBarcode }: ItemCardProps) {
 
   return (
     <Card className="overflow-hidden hover-elevate" data-testid={`card-item-${item.id}`}>
-      <div className="aspect-square overflow-hidden bg-muted">
-        <img
-          src={item.imageUrl}
-          alt={item.name}
-          className="w-full h-full object-cover"
-          data-testid={`img-item-${item.id}`}
-        />
+      <div className="aspect-square overflow-hidden bg-muted relative">
+        {/* Loading skeleton */}
+        {imageLoading && !imageError && (
+          <div className="absolute inset-0 animate-pulse bg-gray-200" data-testid={`skeleton-${item.id}`} />
+        )}
+
+        {/* Only render img when not in error state */}
+        {!imageError && (
+          <img
+            src={`${item.imageUrl}?rev=${imageRevision}`}
+            alt={item.name || 'Item image'}
+            loading="lazy"
+            onLoad={() => {
+              setImageLoading(false);
+              // Telemetry: Log successful retry
+              if (process.env.NODE_ENV !== 'production' && imageRetryCountRef.current > 0) {
+                console.debug('[Telemetry] Image retry success:', {
+                  itemId: item.id,
+                  retryCount: imageRetryCountRef.current,
+                  revision: imageRevision,
+                });
+              }
+            }}
+            onError={() => {
+              setImageError(true);
+              setImageLoading(false);
+            }}
+            className={cn(
+              'w-full h-full object-cover',
+              imageLoading && 'opacity-50'
+            )}
+            data-testid={`img-item-${item.id}`}
+          />
+        )}
+
+        {/* Accessible placeholder UI for error state */}
+        {imageError && (
+          <div
+            role="img"
+            aria-label={`No image available for ${item.name}`}
+            className="absolute inset-0 flex flex-col items-center justify-center bg-gray-100"
+            data-testid={`placeholder-${item.id}`}
+          >
+            <ImageIcon aria-hidden className="h-12 w-12 text-gray-400" />
+            <p className="sr-only">Image failed to load</p>
+            <p className="mt-2 text-sm text-gray-600 text-center px-4">{item.name}</p>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="mt-2 text-xs underline hover:text-gray-900"
+              onClick={() => {
+                setImageError(false);
+                setImageLoading(true);
+                setImageRevision(r => r + 1); // Cache-busting
+
+                // Telemetry: Track retry attempt
+                if (process.env.NODE_ENV !== 'production') {
+                  imageRetryCountRef.current++;
+                  console.debug('[Telemetry] Image retry attempt:', {
+                    itemId: item.id,
+                    retryCount: imageRetryCountRef.current,
+                  });
+                }
+              }}
+              data-testid={`button-retry-${item.id}`}
+            >
+              Retry loading image
+            </Button>
+          </div>
+        )}
       </div>
       <CardContent className="p-4 space-y-3">
         <div>
