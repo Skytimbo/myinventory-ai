@@ -18,9 +18,47 @@ jobs:
       - name: Verify pnpm version
         run: pnpm --version
 
-  test:
-    name: Run Tests
+  test-server:
+    name: Server Tests
     needs: guard-pm
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL_TEST: ${{ secrets.DATABASE_URL_TEST || 'postgresql://test:test@localhost:5432/test' }}
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable corepack and prepare pnpm
+        run: corepack enable && corepack prepare pnpm@10.20.0 --activate
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Reset and seed test database
+        run: pnpm db:reset && pnpm db:seed
+
+      - name: Run server tests
+        run: pnpm test:server
+
+  test-client:
+    name: Client Tests
+    needs: guard-pm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable corepack and prepare pnpm
+        run: corepack enable && corepack prepare pnpm@10.20.0 --activate
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Run client tests
+        run: pnpm test:client
+
+  e2e:
+    name: E2E Tests
+    needs: [test-server, test-client]
     runs-on: ubuntu-latest
     env:
       DATABASE_URL_TEST: ${{ secrets.DATABASE_URL_TEST || 'postgresql://test:test@localhost:5432/test' }}
@@ -39,12 +77,6 @@ jobs:
 
       - name: Reset and seed test database
         run: pnpm db:reset && pnpm db:seed
-
-      - name: Run server tests
-        run: pnpm test:server
-
-      - name: Run client tests
-        run: pnpm test:client
 
       - name: Run e2e tests
         run: pnpm e2e
