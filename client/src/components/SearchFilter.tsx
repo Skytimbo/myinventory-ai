@@ -1,8 +1,9 @@
-import { useState, useMemo, useEffect, useRef } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import { debounce } from "lodash-es";
 import { Search, SlidersHorizontal, Calendar as CalendarIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   Sheet,
   SheetContent,
@@ -26,6 +27,10 @@ interface SearchFilterProps {
   categories: string[];
   selectedCategories: string[];
   onCategoryToggle: (category: string) => void;
+  locations: string[];
+  selectedLocations: string[];
+  onLocationToggle: (location: string) => void;
+  locationCounts: Record<string, number>;
   maxValue: number;
   valueRange: [number, number];
   onValueRangeChange: (range: [number, number]) => void;
@@ -34,12 +39,16 @@ interface SearchFilterProps {
   onClearFilters: () => void;
 }
 
-export function SearchFilter({
+export const SearchFilter = React.memo(function SearchFilter({
   searchQuery,
   onSearchChange,
   categories,
   selectedCategories,
   onCategoryToggle,
+  locations,
+  selectedLocations,
+  onLocationToggle,
+  locationCounts,
   maxValue,
   valueRange,
   onValueRangeChange,
@@ -98,7 +107,7 @@ export function SearchFilter({
       <div className="relative flex-1">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
         <Input
-          type="search"
+          type="text"
           placeholder="Search items..."
           value={inputValue}
           onChange={(e) => {
@@ -109,6 +118,11 @@ export function SearchFilter({
             // Telemetry instrumentation (dev-only)
             if (process.env.NODE_ENV !== 'production') {
               telemetryRef.current.searchInvocations++;
+            }
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
             }
           }}
           className="pl-10"
@@ -152,6 +166,30 @@ export function SearchFilter({
                 ))}
               </div>
             </div>
+
+            {locations.length > 0 && (
+              <div className="space-y-3">
+                <Label className="text-sm font-semibold">Location</Label>
+                <div className="flex flex-wrap gap-2">
+                  {locations.map((location) => {
+                    const isSelected = selectedLocations.includes(location);
+                    const count = locationCounts[location] || 0;
+                    return (
+                      <Badge
+                        key={location}
+                        variant={isSelected ? "default" : "outline"}
+                        className="cursor-pointer"
+                        onClick={() => onLocationToggle(location)}
+                        data-testid={`badge-location-${location}`}
+                      >
+                        <span className="line-clamp-1">{location}</span>
+                        <span className="ml-1.5 opacity-70">({count})</span>
+                      </Badge>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {maxValue > 0 && (
               <div className="space-y-3">
@@ -245,4 +283,4 @@ export function SearchFilter({
       </Sheet>
     </div>
   );
-}
+});

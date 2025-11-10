@@ -3,7 +3,7 @@ import { InventoryItem } from "@shared/schema";
 import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Pencil, Trash2, Maximize2, Info, TrendingUp, TrendingDown, Minus, ImageIcon } from "lucide-react";
+import { Pencil, Trash2, Maximize2, Info, TrendingUp, TrendingDown, Minus, ImageIcon, MapPin } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   Tooltip,
@@ -128,6 +128,13 @@ export function ItemCard({ item, onDelete, onViewBarcode }: ItemCardProps) {
             {item.description}
           </p>
         </div>
+
+        {item.location && (
+          <div className="flex items-center gap-1 text-sm text-muted-foreground" data-testid={`text-location-${item.id}`}>
+            <MapPin className="w-3.5 h-3.5" />
+            <span className="line-clamp-1">{item.location}</span>
+          </div>
+        )}
 
         <div className="flex flex-wrap gap-2">
           <Badge variant="secondary" className="text-xs" data-testid={`badge-category-${item.id}`}>

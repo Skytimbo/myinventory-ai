@@ -3,14 +3,17 @@ import Webcam from "react-webcam";
 import { Camera, Upload, RefreshCw, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 interface CameraCaptureProps {
-  onImageCapture: (imageDataUrl: string) => void;
+  onImageCapture: (imageDataUrl: string, location?: string) => void;
 }
 
 export function CameraCapture({ onImageCapture }: CameraCaptureProps) {
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
+  const [location, setLocation] = useState("");
   const webcamRef = useRef<Webcam>(null);
 
   const capture = useCallback(() => {
@@ -22,12 +25,14 @@ export function CameraCapture({ onImageCapture }: CameraCaptureProps) {
 
   const retake = () => {
     setCapturedImage(null);
+    setLocation("");
   };
 
   const useImage = () => {
     if (capturedImage) {
-      onImageCapture(capturedImage);
+      onImageCapture(capturedImage, location || undefined);
       setCapturedImage(null);
+      setLocation("");
       setIsCameraActive(false);
     }
   };
@@ -108,6 +113,25 @@ export function CameraCapture({ onImageCapture }: CameraCaptureProps) {
                 className="w-full aspect-square object-cover"
                 data-testid="video-webcam"
               />
+            )}
+
+            {capturedImage && (
+              <div className="p-4 bg-background/95 backdrop-blur-sm">
+                <div className="space-y-2">
+                  <Label htmlFor="location-input" className="text-sm">
+                    Location (optional)
+                  </Label>
+                  <Input
+                    id="location-input"
+                    type="text"
+                    placeholder="e.g., Garage, Box #15"
+                    value={location}
+                    onChange={(e) => setLocation(e.target.value)}
+                    maxLength={200}
+                    data-testid="input-location"
+                  />
+                </div>
+              </div>
             )}
 
             <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/60 to-transparent">

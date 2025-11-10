@@ -2,7 +2,7 @@
 
 ## Overview
 
-MyInventory AI is an intelligent inventory management system that leverages AI-powered image recognition to catalog and manage household items. The application enables users to capture photos of items, automatically extract metadata through GPT-5 vision analysis, generate barcodes for tracking, and estimate resale values with confidence indicators. Built as a full-stack web application, it combines a React-based frontend with an Express backend, persistent PostgreSQL storage, and integrates with OpenAI's API for image analysis capabilities. Features include advanced filtering with date ranges, professional PDF export, and barcode downloads.
+MyInventory AI is an intelligent inventory management system that leverages AI-powered image recognition to catalog and manage household items. The application enables users to capture photos of items, automatically extract metadata through GPT-5 vision analysis, generate barcodes for tracking, and estimate resale values with confidence indicators. Items can be tagged with optional storage locations for better organization. Built as a full-stack web application, it combines a React-based frontend with an Express backend, persistent PostgreSQL storage, and integrates with OpenAI's API for image analysis capabilities. Features include advanced filtering with location badges, date ranges, professional PDF export, and barcode downloads.
 
 ## User Preferences
 
@@ -29,11 +29,12 @@ Preferred communication style: Simple, everyday language.
 - Camera capture using react-webcam for direct photo taking
 - Uppy file uploader integration for batch uploads to object storage
 - JsBarcode library for client-side barcode generation and rendering
-- Advanced filtering with search, category, price range, and date range (From/To) controls
+- Advanced filtering with search, category, location (multi-select badges with counts), price range, and date range (From/To) controls
 - Dashboard with aggregate statistics (total items, value, categories, averages)
 - Professional PDF export with embedded images, barcodes, and item details
 - CSV export functionality for inventory data
 - Barcode download as PNG images for physical label printing
+- Optional location tagging for items (e.g., "Garage, Box #15") with visual badges and MapPin icons
 
 ### Backend Architecture
 
@@ -46,7 +47,7 @@ Preferred communication style: Simple, everyday language.
 **Data Storage Strategy**
 - PostgreSQL database with Drizzle ORM for persistent storage
 - Database schema defined using Drizzle ORM with PostgreSQL dialect
-- Schema includes inventory items table with fields for name, description, category, tags (array), image URL, barcode data, estimated value, value confidence, value rationale, and timestamps
+- Schema includes inventory items table with fields for name, description, category, tags (array), image URL, barcode data, estimated value, value confidence, value rationale, location (optional), and timestamps
 - Neon serverless PostgreSQL integration via DATABASE_URL environment variable
 - Type-safe queries using NeonHttpDatabase type
 
