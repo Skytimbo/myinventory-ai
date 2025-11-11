@@ -1,0 +1,5 @@
+# MyInventory AI - Design Guidelines
+
+## Design Approach
+
+**Selected Approach:** Hybrid - Combining Linear's minimal dashboard aesthetics with Pinterest's image-centric card layouts and Notion's clean data organization.

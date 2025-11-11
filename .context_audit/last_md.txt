@@ -1,0 +1,7 @@
+./CHANGELOG.md
+./CONTEXT.md
+./design_guidelines.md
+./replit.md
+./tasks/0001-prd-quick-fixes.md
+./tasks/PROTOCOLS.md
+./tasks/tasks-0001-prd-quick-fixes.md
