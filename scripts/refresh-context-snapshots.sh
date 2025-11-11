@@ -62,13 +62,8 @@ find . -type f -iname "*.md" \
 # 4. Update SHA256 in CONTEXT.md
 echo "🔐 Computing CONTEXT.md SHA256..."
 
-# First, we need to zero out the old SHA256 to compute the new one
-# This is a chicken-and-egg problem, so we'll use a placeholder approach
-TEMP_FILE=$(mktemp)
-cp CONTEXT.md "$TEMP_FILE"
-
-# Compute SHA256 of current file
-ACTUAL_SHA=$(shasum -a 256 CONTEXT.md | awk '{print $1}')
+# Compute SHA256 excluding the sha256_of_this_file line to avoid self-reference loop
+ACTUAL_SHA=$(grep -v 'sha256_of_this_file:' CONTEXT.md | shasum -a 256 | awk '{print $1}')
 
 # Update the SHA256 in the file
 if grep -q "sha256_of_this_file:" CONTEXT.md; then
@@ -80,9 +75,6 @@ if grep -q "sha256_of_this_file:" CONTEXT.md; then
   fi
   echo "Updated SHA256: $ACTUAL_SHA"
 fi
-
-# Clean up
-rm -f "$TEMP_FILE"
 
 echo -e "${GREEN}✅ Context snapshots refreshed successfully${NC}"
 echo ""

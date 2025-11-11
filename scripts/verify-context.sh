@@ -21,9 +21,9 @@ if grep -q "\[PLACEHOLDER" CONTEXT.md; then
   exit 1
 fi
 
-# Check 2: Verify SHA256 matches actual file
-EXPECTED_SHA=$(grep "sha256_of_this_file:" CONTEXT.md | awk '{print $2}' | tr -d '"')
-ACTUAL_SHA=$(shasum -a 256 CONTEXT.md | awk '{print $1}')
+# Check 2: Verify SHA256 matches actual file (excluding the sha256 line itself)
+EXPECTED_SHA=$(grep "sha256_of_this_file:" CONTEXT.md | awk -F'"' '{print $2}')
+ACTUAL_SHA=$(grep -v 'sha256_of_this_file:' CONTEXT.md | shasum -a 256 | awk '{print $1}')
 
 if [ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]; then
   echo -e "${RED}❌ CONTEXT.md SHA256 mismatch${NC}"

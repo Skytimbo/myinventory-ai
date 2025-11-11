@@ -7,7 +7,7 @@ format_spec: v1-phase1-yaml-front-matter-sections-0-15
 source_commit: "683dd31d18875a9cf9620678bd89f315c4ac7002"
 machine_readable_index: ".context_audit/doc_inventory.csv"
 verification:
-  sha256_of_this_file: "35d20c802d1aa45d53297284f8bb233c9f56e872017789be91a55f0ac4f9a115"
+  sha256_of_this_file: "4409a325df6a1c998d4a4a40e9a88e79c5b7ba8959e0f622d2e5ffdb5e7e0c81"
 sources:
   - path: tasks/0001-prd-quick-fixes.md
     role: prd-task-plan
