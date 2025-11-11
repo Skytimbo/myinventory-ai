@@ -1,5 +1,5 @@
 # Task List: PRD 0001 - Week 1 Technical Debt Fixes
 
-**Source PRD:** `tasks/0001-prd-quick-fixes.md`
-**Created:** 2025-11-09
-**Status:** Sub-tasks expanded, ready for implementation
+> **⚠️ DEPRECATED**
+>
+> This file has been superseded by `tasks/0001-prd-quick-fixes.md` at commit `60d8ef62c510e7f64fbb719adf393bcb2f44a7f4`.

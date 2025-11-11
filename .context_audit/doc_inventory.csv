@@ -1,7 +1,9 @@
 path,size,last_modified
-./tasks/tasks-0001-prd-quick-fixes.md,14133,2025-11-09 20:17:37
+./tasks/tasks-0001-prd-quick-fixes.md,14375,2025-11-11 13:36:40
 ./tasks/0001-prd-quick-fixes.md,25255,2025-11-09 20:17:37
 ./tasks/PROTOCOLS.md,9264,2025-11-09 20:17:37
+./CONTEXT.md,18127,2025-11-11 13:55:27
 ./CHANGELOG.md,1680,2025-11-09 20:39:52
 ./replit.md,5981,2025-11-09 20:17:37
 ./design_guidelines.md,7649,2025-11-07 11:42:10
+./docs/ADRs/ADR-001-db-keys.md,4554,2025-11-11 13:53:32

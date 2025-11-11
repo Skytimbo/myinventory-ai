@@ -1,0 +1,117 @@
+{
+  "generated": "2025-11-11",
+  "source": "server/routes.ts",
+  "base_url": "/api",
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/api/items",
+      "description": "Get all inventory items",
+      "request": null,
+      "response": {
+        "type": "array",
+        "schema": "InventoryItem[]"
+      },
+      "errors": []
+    },
+    {
+      "method": "GET",
+      "path": "/api/items/:id",
+      "description": "Get single inventory item",
+      "parameters": {
+        "id": "string (item ID)"
+      },
+      "response": {
+        "type": "object",
+        "schema": "InventoryItem"
+      },
+      "errors": [
+        {
+          "status": 404,
+          "code": "NOT_FOUND",
+          "message": "Item not found"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/items",
+      "description": "Create new inventory item with image analysis",
+      "request": {
+        "type": "multipart/form-data",
+        "fields": {
+          "image": "file (required)"
+        }
+      },
+      "response": {
+        "type": "object",
+        "schema": "InventoryItem"
+      },
+      "errors": [
+        {
+          "status": 400,
+          "code": "NO_IMAGE",
+          "message": "No image provided"
+        },
+        {
+          "status": 500,
+          "code": "UPSTREAM_AI",
+          "message": "AI analysis failed"
+        }
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/items/:id",
+      "description": "Delete inventory item",
+      "parameters": {
+        "id": "string (item ID)"
+      },
+      "response": {
+        "type": "object",
+        "schema": "{ success: boolean }"
+      },
+      "errors": [
+        {
+          "status": 404,
+          "code": "NOT_FOUND",
+          "message": "Item not found"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/objects/upload",
+      "description": "Get object storage upload URL",
+      "request": null,
+      "response": {
+        "type": "object",
+        "schema": "{ uploadURL: string }"
+      },
+      "errors": []
+    },
+    {
+      "method": "GET",
+      "path": "/objects/:objectPath(*)",
+      "description": "Serve objects (images)",
+      "parameters": {
+        "objectPath": "string (path to object)"
+      },
+      "response": {
+        "type": "binary",
+        "description": "Image file stream"
+      },
+      "errors": [
+        {
+          "status": 404,
+          "code": "OBJECT_NOT_FOUND",
+          "message": "Object not found"
+        }
+      ]
+    }
+  ],
+  "error_format": {
+    "structure": "{ error: string, code?: string }",
+    "environment": "Details hidden in production, exposed in development"
+  }
+}

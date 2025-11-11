@@ -1,0 +1,13 @@
+#!/bin/bash
+# Pre-commit hook to verify CONTEXT.md integrity
+# To enable: git config core.hooksPath .githooks
+
+set -e
+
+echo "🔍 Running CONTEXT.md verification..."
+
+if [ -f scripts/verify-context.sh ]; then
+  bash scripts/verify-context.sh
+else
+  echo "⚠️  scripts/verify-context.sh not found, skipping verification"
+fi

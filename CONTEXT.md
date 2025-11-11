@@ -7,7 +7,7 @@ format_spec: v1-phase1-yaml-front-matter-sections-0-15
 source_commit: "60d8ef62c510e7f64fbb719adf393bcb2f44a7f4"
 machine_readable_index: ".context_audit/doc_inventory.csv"
 verification:
-  sha256_of_this_file: "e66ef847d317133d843e0086377a3a7bbc89afcc1b8ddc442dddf15f2fd0b0a7"
+  sha256_of_this_file: "7997df4f6aaba5c553116c0d4ac633c1bc818a7926dae04cd458c669536fdb00"
 sources:
   - path: tasks/0001-prd-quick-fixes.md
     role: prd-task-plan
@@ -32,6 +32,8 @@ sources:
 ---
 
 # CONTEXT.md
+
+[![Context Guard](https://github.com/Skytimbo/myinventory-ai/actions/workflows/context-guard.yml/badge.svg)](https://github.com/Skytimbo/myinventory-ai/actions/workflows/context-guard.yml)
 
 **Project Context & Documentation Map**
 This file provides a comprehensive snapshot of the myinventory-ai codebase, its documentation, architecture, and current state. It serves as the entry point for understanding the project structure and navigating key resources.
@@ -118,10 +120,8 @@ myinventory-ai/
 └── playwright.config.ts # E2E test configuration
 ```
 
-**Tree Output Placeholder:**
-```
-[PLACEHOLDER: Run `tree -L 3 -I 'node_modules|dist|.git' > .context_audit/tree.txt` to generate]
-```
+**Tree Output:**
+See `.context_audit/tree.txt` for full repository structure listing.
 
 ---
 
@@ -367,6 +367,9 @@ Built on Tailwind's color primitives with custom CSS variables for theming.
 
 ## Section 9: API Reference
 
+> **Source of Truth:** `server/routes.ts`
+> **Machine-Readable Index:** `.context_audit/api_endpoints.json`
+
 ### Base URL
 
 - Development: `http://localhost:5000`
@@ -376,23 +379,16 @@ Built on Tailwind's color primitives with custom CSS variables for theming.
 
 **Inventory Items**
 ```
-GET    /api/items           # List all items (with filters)
+GET    /api/items           # List all items
 GET    /api/items/:id       # Get single item
-POST   /api/items           # Create item
-PUT    /api/items/:id       # Update item
+POST   /api/items           # Create item with image upload (multipart/form-data)
 DELETE /api/items/:id       # Delete item
 ```
 
-**Image Processing**
+**Object Storage**
 ```
-POST   /api/upload          # Upload image
-POST   /api/analyze         # Analyze image with AI
-```
-
-**Export**
-```
-GET    /api/export/pdf      # Export inventory to PDF
-GET    /api/barcode/:id     # Download barcode
+POST   /api/objects/upload  # Get upload URL for object storage
+GET    /objects/:objectPath # Serve objects (images)
 ```
 
 ### Error Response Format
@@ -607,7 +603,7 @@ ba4a0fb ci: add Postgres service; seed DB; wire e2e to webServer
 **Files Scanned:** 6 markdown files
 **Deprecated Files:** 1 (`tasks/tasks-0001-prd-quick-fixes.md`)
 **Canonical PRD:** `tasks/0001-prd-quick-fixes.md`
-**Git Commit (audit baseline):** `[PLACEHOLDER: Run 'git rev-parse HEAD' to insert]`
+**Git Commit (audit baseline):** `60d8ef62c510e7f64fbb719adf393bcb2f44a7f4`
 
 **Audit Command:**
 ```bash

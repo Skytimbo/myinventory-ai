@@ -20,7 +20,9 @@
     "test": "pnpm test:server && pnpm test:client",
     "test:server": "vitest run --config server/vitest.config.ts",
     "test:client": "vitest run --config vite.config.ts",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "context:verify": "bash scripts/verify-context.sh",
+    "context:refresh": "bash scripts/refresh-context-snapshots.sh"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.17.2",
