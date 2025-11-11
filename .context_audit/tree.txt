@@ -7,7 +7,9 @@
 ./.context_audit/last_md.txt
 ./.context_audit/snippets
 ./.context_audit/snippets/CHANGELOG.md.head5.txt
+./.context_audit/snippets/CONTEXT.md.head5.txt
 ./.context_audit/snippets/design_guidelines.md.head5.txt
+./.context_audit/snippets/docs__ADRs__ADR-001-db-keys.md.head5.txt
 ./.context_audit/snippets/replit.md.head5.txt
 ./.context_audit/snippets/tasks__0001-prd-quick-fixes.md.head5.txt
 ./.context_audit/snippets/tasks__PROTOCOLS.md.head5.txt

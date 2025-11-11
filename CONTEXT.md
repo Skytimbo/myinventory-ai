@@ -4,10 +4,10 @@ last_updated: 2025-11-11
 project_name: myinventory-ai
 audit_phase: 1
 format_spec: v1-phase1-yaml-front-matter-sections-0-15
-source_commit: "60d8ef62c510e7f64fbb719adf393bcb2f44a7f4"
+source_commit: "683dd31d18875a9cf9620678bd89f315c4ac7002"
 machine_readable_index: ".context_audit/doc_inventory.csv"
 verification:
-  sha256_of_this_file: "7997df4f6aaba5c553116c0d4ac633c1bc818a7926dae04cd458c669536fdb00"
+  sha256_of_this_file: "35d20c802d1aa45d53297284f8bb233c9f56e872017789be91a55f0ac4f9a115"
 sources:
   - path: tasks/0001-prd-quick-fixes.md
     role: prd-task-plan
