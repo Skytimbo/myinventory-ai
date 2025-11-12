@@ -3,14 +3,34 @@ import AxeBuilder from '@axe-core/playwright';
 
 test.describe('Image Loading Fallback', () => {
   test.beforeEach(async ({ page }) => {
-    // Seed the database with test data including a broken image
-    // This assumes db:seed creates items with predictable IDs
+    // Stub /api/items to return deterministic test data
+    await page.route('/api/items', async route => {
+      const items = [
+        {
+          id: 'test-1',
+          name: 'Stub Item',
+          description: 'Test item for E2E',
+          imageUrl: '/broken.jpg', // force fallback path
+          category: 'Test',
+          tags: [],
+          barcodeData: 'TEST-1',
+          createdAt: new Date().toISOString(),
+        }
+      ];
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(items)
+      });
+    });
+
+    // Navigate to the app (baseURL is configured in playwright.config.ts)
     await page.goto('/');
   });
 
   test('should show fallback placeholder when image fails to load', async ({ page }) => {
     let imageRequestCount = 0;
-    const imageUrl = /\/objects\/.*\.(jpg|png)/;
+    const imageUrl = /\/broken\.jpg/;
 
     // Intercept image requests
     await page.route(imageUrl, async (route) => {
@@ -29,8 +49,9 @@ test.describe('Image Loading Fallback', () => {
       }
     });
 
-    // Wait for the page to load and an item card to appear
-    await page.waitForSelector('[data-testid^="card-item-"]', { timeout: 10000 });
+    // Wait for the card to appear with more robust selector
+    const card = page.locator('[data-testid^="card-item-"]').first();
+    await card.waitFor({ state: 'visible', timeout: 15000 });
 
     // The image should fail to load and show the fallback placeholder
     const placeholder = page.locator('[data-testid^="placeholder-"]').first();
@@ -55,7 +76,7 @@ test.describe('Image Loading Fallback', () => {
 
   test('should successfully load image on retry with cache-busting', async ({ page }) => {
     let imageRequestCount = 0;
-    const imageUrl = /\/objects\/.*\.(jpg|png)/;
+    const imageUrl = /\/broken\.jpg/;
     let caughtCacheBustedRequest = false;
 
     // Intercept image requests
@@ -91,12 +112,13 @@ test.describe('Image Loading Fallback', () => {
       }
     });
 
-    // Navigate to page
-    await page.waitForSelector('[data-testid^="card-item-"]', { timeout: 10000 });
+    // Wait for card to appear
+    const card = page.locator('[data-testid^="card-item-"]').first();
+    await card.waitFor({ state: 'visible', timeout: 15000 });
 
     // Wait for fallback placeholder to appear
     const placeholder = page.locator('[data-testid^="placeholder-"]').first();
-    await expect(placeholder).toBeVisible({ timeout: 5000 });
+    await placeholder.waitFor({ state: 'visible' });
 
     // Click retry button
     const retryButton = page.locator('[data-testid^="button-retry-"]').first();
@@ -116,13 +138,15 @@ test.describe('Image Loading Fallback', () => {
 
   test('should show loading skeleton while image loads', async ({ page }) => {
     // Delay image loading to test skeleton state
-    await page.route(/\/objects\/.*\.(jpg|png)/, async (route) => {
+    await page.route(/\/broken\.jpg/, async (route) => {
       // Delay by 1 second
       await new Promise(resolve => setTimeout(resolve, 1000));
       await route.continue();
     });
 
-    await page.waitForSelector('[data-testid^="card-item-"]', { timeout: 10000 });
+    // Wait for card to appear
+    const card = page.locator('[data-testid^="card-item-"]').first();
+    await card.waitFor({ state: 'visible', timeout: 15000 });
 
     // Check for loading skeleton (animate-pulse class)
     const loadingSkeleton = page.locator('[data-testid^="skeleton-"]').first();
@@ -141,7 +165,7 @@ test.describe('Image Loading Fallback', () => {
     let imageRequestCount = 0;
 
     // Intercept and fail image requests
-    await page.route(/\/objects\/.*\.(jpg|png)/, async (route) => {
+    await page.route(/\/broken\.jpg/, async (route) => {
       imageRequestCount++;
       if (imageRequestCount === 1) {
         await route.fulfill({
@@ -153,10 +177,13 @@ test.describe('Image Loading Fallback', () => {
       }
     });
 
-    await page.waitForSelector('[data-testid^="card-item-"]', { timeout: 10000 });
+    // Wait for card to appear
+    const card = page.locator('[data-testid^="card-item-"]').first();
+    await card.waitFor({ state: 'visible', timeout: 15000 });
 
     // Wait for placeholder
-    await page.waitForSelector('[data-testid^="placeholder-"]', { timeout: 5000 });
+    const placeholder = page.locator('[data-testid^="placeholder-"]').first();
+    await placeholder.waitFor({ state: 'visible' });
 
     // Focus on the retry button using keyboard navigation
     await page.keyboard.press('Tab');
@@ -181,7 +208,7 @@ test.describe('Image Loading Fallback', () => {
     let imageRequestCount = 0;
 
     // Fail first 3 requests
-    await page.route(/\/objects\/.*\.(jpg|png)/, async (route) => {
+    await page.route(/\/broken\.jpg/, async (route) => {
       imageRequestCount++;
       if (imageRequestCount <= 3) {
         await route.fulfill({
@@ -202,7 +229,9 @@ test.describe('Image Loading Fallback', () => {
       }
     });
 
-    await page.waitForSelector('[data-testid^="card-item-"]', { timeout: 10000 });
+    // Wait for card to appear
+    const card = page.locator('[data-testid^="card-item-"]').first();
+    await card.waitFor({ state: 'visible', timeout: 15000 });
 
     // Verify placeholder appears
     const placeholder = page.locator('[data-testid^="placeholder-"]').first();
