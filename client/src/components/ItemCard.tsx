@@ -86,10 +86,9 @@ export function ItemCard({ item, onDelete, onViewBarcode }: ItemCardProps) {
         {/* Accessible placeholder UI for error state */}
         {imageError && (
           <div
-            role="img"
-            aria-label={`No image available for ${item.name}`}
             className="absolute inset-0 flex flex-col items-center justify-center bg-gray-100"
             data-testid={`placeholder-${item.id}`}
+            aria-label={`Image failed to load for ${item.name}`}
           >
             <ImageIcon aria-hidden className="h-12 w-12 text-gray-400" />
             <p className="sr-only">Image failed to load</p>
@@ -113,6 +112,7 @@ export function ItemCard({ item, onDelete, onViewBarcode }: ItemCardProps) {
                 }
               }}
               data-testid={`button-retry-${item.id}`}
+              aria-label="Retry loading image"
             >
               Retry loading image
             </Button>
