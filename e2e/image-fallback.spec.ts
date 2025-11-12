@@ -12,21 +12,29 @@ test.describe('Image Loading Fallback', () => {
     wireNetworkDebug(page);
 
     // Stub /api/items to return deterministic test data
-    // Match /api/items with or without query params
-    await page.route(/\/api\/items($|\?)/, async route => {
+    // Route must match exact API path that client requests
+    const itemsPattern = /\/api\/items(\?.*)?$/;
+
+    await page.route(itemsPattern, async route => {
       apiHits++;
       console.log(`[STUB] /api/items hit #${apiHits}`);
 
+      // Return array of items (not wrapped object)
+      // Use camelCase field names to match Drizzle schema $inferSelect
       const items = [
         {
           id: 'test-1',
           name: 'Stub Item',
           description: 'Test item for E2E',
-          imageUrl: '/broken.jpg', // force fallback path
           category: 'Test',
           tags: [],
-          barcodeData: 'TEST-1',
-          createdAt: new Date().toISOString(),
+          imageUrl: '/broken.jpg', // camelCase - force fallback path
+          barcodeData: 'TEST-1',  // camelCase
+          estimatedValue: null,
+          valueConfidence: null,
+          valueRationale: null,
+          location: null,
+          createdAt: new Date().toISOString(), // camelCase
         }
       ];
 
@@ -48,7 +56,7 @@ test.describe('Image Loading Fallback', () => {
 
     // Wait for the API response to complete
     await page.waitForResponse(
-      response => response.url().includes('/api/items') && response.ok(),
+      response => itemsPattern.test(new URL(response.url()).pathname) && response.ok(),
       { timeout: 15000 }
     );
   });

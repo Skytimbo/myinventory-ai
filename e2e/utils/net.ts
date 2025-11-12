@@ -5,32 +5,43 @@ import type { Page } from '@playwright/test';
  * Useful for diagnosing why routes aren't matching or pages aren't loading
  *
  * Note: Uses events instead of routing to avoid interfering with route() stubs
+ *
+ * Set DEBUG_E2E=1 environment variable to enable verbose request/response logging
  */
 export function wireNetworkDebug(page: Page) {
-  // Log browser console messages
+  const debug = process.env.DEBUG_E2E === '1';
+
+  // Always log browser console errors (important)
   page.on('console', msg => {
-    const type = msg.type();
-    const text = msg.text();
-    console.log(`[BROWSER ${type.toUpperCase()}]`, text);
+    if (msg.type() === 'error') {
+      console.log(`[BROWSER ERROR]`, msg.text());
+    } else if (debug) {
+      const type = msg.type();
+      const text = msg.text();
+      console.log(`[BROWSER ${type.toUpperCase()}]`, text);
+    }
   });
 
-  // Log browser errors
+  // Always log browser page errors (important)
   page.on('pageerror', error => {
     console.log('[BROWSER ERROR]', error.message);
-    console.log(error.stack);
+    if (debug) {
+      console.log(error.stack);
+    }
   });
 
-  // Log all network requests using events (doesn't interfere with route() handlers)
-  page.on('request', request => {
-    const method = request.method();
-    const url = request.url();
-    console.log(`[REQ] ${method} ${url}`);
-  });
+  // Only log network requests/responses if DEBUG_E2E is set
+  if (debug) {
+    page.on('request', request => {
+      const method = request.method();
+      const url = request.url();
+      console.log(`[REQ] ${method} ${url}`);
+    });
 
-  // Log all network responses
-  page.on('response', response => {
-    const status = response.status();
-    const url = response.url();
-    console.log(`[RES] ${status} ${url}`);
-  });
+    page.on('response', response => {
+      const status = response.status();
+      const url = response.url();
+      console.log(`[RES] ${status} ${url}`);
+    });
+  }
 }
