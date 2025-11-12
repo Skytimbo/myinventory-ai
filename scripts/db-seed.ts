@@ -1,90 +1,63 @@
-import { neon } from "@neondatabase/serverless";
-import { drizzle } from "drizzle-orm/neon-http";
-import { inventoryItems } from "../shared/schema";
+/* scripts/db-seed.ts */
 import 'dotenv/config';
+import { getPgPoolFromUrl } from './_db';
+import { randomUUID } from 'crypto';
 
-/**
- * Seed test database with deterministic test data
- * Uses DATABASE_URL_TEST if available, otherwise DATABASE_URL
- */
-async function seedDatabase() {
-  const databaseUrl = process.env.DATABASE_URL_TEST || process.env.DATABASE_URL;
+const url = process.env.DATABASE_URL_TEST || process.env.DATABASE_URL;
+if (!url) {
+  console.error('DATABASE_URL_TEST or DATABASE_URL must be set');
+  process.exit(1);
+}
 
-  if (!databaseUrl) {
-    throw new Error("DATABASE_URL or DATABASE_URL_TEST environment variable is required");
-  }
+const items = [
+  { name: 'Cordless Drill', category: 'Tools', location: 'Garage' },
+  { name: 'Camping Stove', category: 'Outdoors', location: 'Shed' },
+  { name: 'Acoustic Guitar', category: 'Music', location: 'Living Room' },
+];
 
-  console.log('🌱 Seeding database...');
-
-  const sqlClient = neon(databaseUrl);
-  const db = drizzle(sqlClient);
-
-  const testItems = [
-    {
-      id: 'test-item-1',
-      name: 'Vintage Camera',
-      description: 'A classic 35mm film camera from the 1970s in excellent condition',
-      category: 'Electronics',
-      tags: ['vintage', 'photography', 'collectible'],
-      imageUrl: '/objects/items/test-camera.jpg',
-      barcodeData: 'INV-TEST-001',
-      estimatedValue: '250.00',
-      valueConfidence: 'high',
-      valueRationale: 'Based on recent eBay sales of similar vintage cameras',
-      createdAt: new Date('2025-01-01T10:00:00Z').toISOString(),
-    },
-    {
-      id: 'test-item-2',
-      name: 'Office Chair',
-      description: 'Ergonomic office chair with lumbar support and adjustable armrests',
-      category: 'Furniture',
-      tags: ['office', 'ergonomic', 'furniture'],
-      imageUrl: '/objects/items/test-chair.jpg',
-      barcodeData: 'INV-TEST-002',
-      estimatedValue: '150.00',
-      valueConfidence: 'medium',
-      valueRationale: 'Typical price range for used ergonomic office chairs',
-      createdAt: new Date('2025-01-02T10:00:00Z').toISOString(),
-    },
-    {
-      id: 'test-item-3',
-      name: 'Laptop',
-      description: 'MacBook Pro 2020 with 16GB RAM and 512GB SSD',
-      category: 'Electronics',
-      tags: ['laptop', 'apple', 'computer'],
-      imageUrl: '/objects/items/test-laptop.jpg',
-      barcodeData: 'INV-TEST-003',
-      estimatedValue: '800.00',
-      valueConfidence: 'high',
-      valueRationale: 'Current market value for used 2020 MacBook Pro',
-      createdAt: new Date('2025-01-03T10:00:00Z').toISOString(),
-    },
-    {
-      id: 'test-item-broken-image',
-      name: 'Test Item with Broken Image',
-      description: 'This item is used to test image fallback functionality',
-      category: 'Test',
-      tags: ['test', 'fallback'],
-      imageUrl: '/objects/items/nonexistent-image.jpg',
-      barcodeData: 'INV-TEST-BROKEN',
-      estimatedValue: '10.00',
-      valueConfidence: 'low',
-      valueRationale: 'Test item',
-      createdAt: new Date('2025-01-04T10:00:00Z').toISOString(),
-    },
-  ];
-
+async function main() {
+  const pool = getPgPoolFromUrl(url);
+  const client = await pool.connect();
   try {
-    for (const item of testItems) {
-      await db.insert(inventoryItems).values(item);
-      console.log(`✓ Inserted: ${item.name}`);
+    console.log('🌱 Seeding database...');
+    await client.query('BEGIN');
+
+    for (const it of items) {
+      await client.query(
+        `INSERT INTO inventory_items
+          (id, name, description, category, tags, image_url, barcode_data, estimated_value, value_confidence, value_rationale, location)
+         VALUES
+          ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [
+          randomUUID(),
+          it.name,
+          `${it.name} description`,
+          it.category,
+          JSON.stringify([]),
+          `/objects/items/${randomUUID()}.jpg`,
+          `INV-${Date.now()}-${Math.random().toString(16).slice(2, 10).toUpperCase()}`,
+          100.0,
+          'low',
+          'Seed data',
+          it.location,
+        ],
+      );
+      console.log(`✓ Inserted: ${it.name}`);
     }
 
-    console.log(`✅ Seeded ${testItems.length} test items`);
-  } catch (error) {
-    console.error('❌ Database seeding failed:', error);
+    await client.query('COMMIT');
+    console.log(`✅ Seeded ${items.length} test items`);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('❌ Database seeding failed:', err);
     process.exit(1);
+  } finally {
+    client.release();
+    await pool.end();
   }
 }
 
-seedDatabase();
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

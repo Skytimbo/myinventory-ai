@@ -1,52 +1,54 @@
-import { neon } from "@neondatabase/serverless";
-import { drizzle } from "drizzle-orm/neon-http";
-import { sql } from "drizzle-orm";
+/* scripts/db-reset.ts */
 import 'dotenv/config';
+import { getPgPoolFromUrl } from './_db';
 
-/**
- * Reset test database - drops and recreates inventory_items table
- * Uses DATABASE_URL_TEST if available, otherwise DATABASE_URL
- */
-async function resetDatabase() {
-  const databaseUrl = process.env.DATABASE_URL_TEST || process.env.DATABASE_URL;
+const url = process.env.DATABASE_URL_TEST || process.env.DATABASE_URL;
+if (!url) {
+  console.error('DATABASE_URL_TEST or DATABASE_URL must be set');
+  process.exit(1);
+}
 
-  if (!databaseUrl) {
-    throw new Error("DATABASE_URL or DATABASE_URL_TEST environment variable is required");
-  }
-
-  console.log('🗑️  Resetting database...');
-
-  const sqlClient = neon(databaseUrl);
-  const db = drizzle(sqlClient);
-
+async function main() {
+  const pool = getPgPoolFromUrl(url);
+  const client = await pool.connect();
   try {
-    // Drop table if exists
-    await db.execute(sql`DROP TABLE IF EXISTS inventory_items CASCADE`);
+    console.log('🗑️  Resetting database...');
+    await client.query('BEGIN');
+
+    await client.query(`DROP TABLE IF EXISTS inventory_items CASCADE;`);
     console.log('✓ Dropped inventory_items table');
 
-    // Recreate table with schema
-    await db.execute(sql`
+    await client.query(`
       CREATE TABLE inventory_items (
-        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
-        description TEXT NOT NULL,
-        category TEXT NOT NULL,
-        tags TEXT[] NOT NULL DEFAULT ARRAY[]::text[],
-        image_url TEXT NOT NULL,
-        barcode_data TEXT NOT NULL,
+        description TEXT,
+        category TEXT,
+        tags TEXT,
+        image_url TEXT,
+        barcode_data TEXT,
         estimated_value DECIMAL(10, 2),
         value_confidence TEXT,
         value_rationale TEXT,
+        location TEXT,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
     `);
     console.log('✓ Created inventory_items table');
 
+    await client.query('COMMIT');
     console.log('✅ Database reset complete');
-  } catch (error) {
-    console.error('❌ Database reset failed:', error);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('❌ Database reset failed:', err);
     process.exit(1);
+  } finally {
+    client.release();
+    await pool.end();
   }
 }
 
-resetDatabase();
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

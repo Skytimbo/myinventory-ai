@@ -1,0 +1,5 @@
+# ADR-001: Database Keys Strategy
+
+**Status:** Accepted
+
+**Date:** 2025-11-11
