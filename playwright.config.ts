@@ -11,7 +11,7 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: 'html',
   use: {
-    baseURL: 'http://localhost:5000',
+    baseURL: 'http://localhost:5173',
     trace: 'on-first-retry',
   },
 
@@ -22,10 +22,18 @@ export default defineConfig({
     },
   ],
 
-  webServer: {
-    command: 'NODE_ENV=test pnpm dev',
-    url: 'http://localhost:5000',
-    reuseExistingServer: !process.env.CI,
-    timeout: 120000,
-  },
+  webServer: [
+    {
+      command: 'pnpm dev:api',
+      url: 'http://localhost:5000/api/health',
+      reuseExistingServer: !process.env.CI,
+      timeout: 120000,
+    },
+    {
+      command: 'pnpm dev:ui',
+      url: 'http://localhost:5173',
+      reuseExistingServer: !process.env.CI,
+      timeout: 120000,
+    },
+  ],
 });

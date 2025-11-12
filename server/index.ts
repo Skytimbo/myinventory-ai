@@ -92,8 +92,13 @@ app.use((req, res, next) => {
   // importantly only setup vite in development and after
   // setting up all the other routes so the catch-all route
   // doesn't interfere with the other routes
-  if (app.get("env") === "development") {
+  const env = app.get("env");
+  if (env === "development") {
     await setupVite(app, server);
+  } else if (env === "api-only") {
+    // API-only mode for E2E testing: skip Vite middleware and static serving
+    // Frontend will be served by separate Vite dev server with proxy
+    log("Running in API-only mode (no UI serving)");
   } else {
     serveStatic(app);
   }

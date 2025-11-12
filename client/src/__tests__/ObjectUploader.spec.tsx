@@ -69,8 +69,8 @@ vi.mock('@uppy/aws-s3', () => ({
   default: vi.fn(),
 }));
 
-vi.mock('@uppy/react', () => ({
-  DashboardModal: vi.fn(({ open, uppy }) => {
+vi.mock('@uppy/react/dashboard-modal', () => ({
+  default: vi.fn(({ open, uppy }) => {
     if (!open) return null;
     return <div data-testid="uppy-dashboard-modal">Uppy Dashboard</div>;
   }),

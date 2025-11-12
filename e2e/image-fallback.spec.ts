@@ -48,17 +48,21 @@ test.describe('Image Loading Fallback', () => {
     // Navigate to the app (baseURL is configured in playwright.config.ts)
     await page.goto('/');
 
+    // Verify we're on the UI server (port 5173), not the API server (port 5000)
+    const currentUrl = new URL(page.url());
+    expect(currentUrl.port).toBe('5173');
+    expect(currentUrl.hostname).toBe('localhost');
+
+    // Defensive check: if we somehow end up on port 5000, fail immediately
+    if (currentUrl.port === '5000') {
+      throw new Error('Test is running on API server (5000) instead of UI server (5173)');
+    }
+
     // Assert the stub was actually hit
     await expect.poll(() => apiHits, {
       message: '/api/items stub was not hit',
       timeout: 5000
     }).toBeGreaterThan(0);
-
-    // Wait for the API response to complete
-    await page.waitForResponse(
-      response => itemsPattern.test(new URL(response.url()).pathname) && response.ok(),
-      { timeout: 15000 }
-    );
   });
 
   test('should show fallback placeholder when image fails to load', async ({ page }) => {
