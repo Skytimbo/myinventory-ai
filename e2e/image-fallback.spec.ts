@@ -1,10 +1,22 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+import { wireNetworkDebug } from './utils/net';
 
 test.describe('Image Loading Fallback', () => {
+  let apiHits = 0;
+
   test.beforeEach(async ({ page }) => {
+    apiHits = 0;
+
+    // Enable network debugging (use events, doesn't interfere with route stubs)
+    wireNetworkDebug(page);
+
     // Stub /api/items to return deterministic test data
-    await page.route('/api/items', async route => {
+    // Match /api/items with or without query params
+    await page.route(/\/api\/items($|\?)/, async route => {
+      apiHits++;
+      console.log(`[STUB] /api/items hit #${apiHits}`);
+
       const items = [
         {
           id: 'test-1',
@@ -17,15 +29,28 @@ test.describe('Image Loading Fallback', () => {
           createdAt: new Date().toISOString(),
         }
       ];
+
       await route.fulfill({
         status: 200,
-        contentType: 'application/json',
+        contentType: 'application/json; charset=utf-8',
         body: JSON.stringify(items)
       });
     });
 
     // Navigate to the app (baseURL is configured in playwright.config.ts)
     await page.goto('/');
+
+    // Assert the stub was actually hit
+    await expect.poll(() => apiHits, {
+      message: '/api/items stub was not hit',
+      timeout: 5000
+    }).toBeGreaterThan(0);
+
+    // Wait for the API response to complete
+    await page.waitForResponse(
+      response => response.url().includes('/api/items') && response.ok(),
+      { timeout: 15000 }
+    );
   });
 
   test('should show fallback placeholder when image fails to load', async ({ page }) => {
