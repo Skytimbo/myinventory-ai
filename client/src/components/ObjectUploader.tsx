@@ -64,13 +64,30 @@ export function ObjectUploader({
       // Remove event handlers explicitly
       u.off("complete", handleComplete);
 
-      // Remove all plugins
-      for (const plugin of u.getPlugins()) {
-        u.removePlugin(plugin);
-      }
+      // Use defensive cleanup: try official lifecycle methods first
+      const anyU = u as any;
 
-      // Close the instance (unbinds remaining events)
-      u.close({ reason: 'unmount' });
+      // Prefer close() which properly cleans up plugins and events
+      if (typeof anyU.close === 'function') {
+        anyU.close({ reason: 'unmount' });
+      }
+      // Fallback to destroy() if available
+      else if (typeof anyU.destroy === 'function') {
+        anyU.destroy();
+      }
+      // Last resort: manually remove plugins if getPlugins is available
+      else if (typeof anyU.getPlugins === 'function') {
+        try {
+          const plugins = anyU.getPlugins();
+          if (plugins && typeof plugins[Symbol.iterator] === 'function') {
+            for (const plugin of plugins) {
+              u.removePlugin(plugin);
+            }
+          }
+        } catch (err) {
+          console.warn('Failed to clean up Uppy plugins:', err);
+        }
+      }
 
       // Null out the ref
       uppyRef.current = null;
