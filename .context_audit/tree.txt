@@ -125,6 +125,8 @@
 ./e2e
 ./e2e-report.tar.gz
 ./e2e/image-fallback.spec.ts
+./e2e/utils
+./e2e/utils/net.ts
 ./node_modules
 ./package.json
 ./playwright-report

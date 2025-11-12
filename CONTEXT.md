@@ -7,7 +7,7 @@ format_spec: v1-phase1-yaml-front-matter-sections-0-15
 source_commit: "683dd31d18875a9cf9620678bd89f315c4ac7002"
 machine_readable_index: ".context_audit/doc_inventory.csv"
 verification:
-  sha256_of_this_file: "4409a325df6a1c998d4a4a40e9a88e79c5b7ba8959e0f622d2e5ffdb5e7e0c81"
+  sha256_of_this_file: "66cbc4e5ae850d9c7c4c8d5e07d047f81f21d3ff3f69d5547d4319119889fd7d"
 sources:
   - path: tasks/0001-prd-quick-fixes.md
     role: prd-task-plan
@@ -308,6 +308,7 @@ pnpm db:seed          # Seed test data
 - Search & filter functionality
 - Image loading fallback scenarios
 - CI integration with trace upload on failures
+- **E2E determinism:** `/api/items` is stubbed to return a plain array with camelCase fields. Images use a deterministic 404 → retry → 200 flow with a 1×1 PNG. Base URL is `http://localhost:5173` with dual web servers (UI 5173, API 5000). Traces/videos/screenshots are uploaded as CI artifacts on failure.
 
 ### Test Commands
 
