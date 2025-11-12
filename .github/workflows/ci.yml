@@ -146,6 +146,7 @@ jobs:
 
       - name: Run Playwright E2E tests
         env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test
           DATABASE_URL_TEST: postgresql://postgres:postgres@localhost:5432/test
           CI: true
         run: pnpm e2e
