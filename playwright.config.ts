@@ -27,7 +27,7 @@ export default defineConfig({
   // CI uses single-server mode (traditional), local uses dual-server mode
   webServer: process.env.CI
     ? {
-        command: 'pnpm dev',
+        command: 'PORT=5000 pnpm dev',
         url: 'http://localhost:5000',
         reuseExistingServer: false,
         timeout: 120000,
