@@ -11,7 +11,7 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: 'html',
   use: {
-    baseURL: 'http://localhost:5173',
+    baseURL: process.env.CI ? 'http://localhost:5000' : 'http://localhost:5173',
     trace: 'on-first-retry',
     video: 'retain-on-failure',
     screenshot: 'only-on-failure',
@@ -24,18 +24,26 @@ export default defineConfig({
     },
   ],
 
-  webServer: [
-    {
-      command: 'pnpm dev:api',
-      url: 'http://localhost:5000',
-      reuseExistingServer: !process.env.CI,
-      timeout: 120000,
-    },
-    {
-      command: 'pnpm dev:ui',
-      url: 'http://localhost:5173',
-      reuseExistingServer: !process.env.CI,
-      timeout: 120000,
-    },
-  ],
+  // CI uses single-server mode (traditional), local uses dual-server mode
+  webServer: process.env.CI
+    ? {
+        command: 'pnpm dev',
+        url: 'http://localhost:5000',
+        reuseExistingServer: false,
+        timeout: 120000,
+      }
+    : [
+        {
+          command: 'pnpm dev:api',
+          url: 'http://localhost:5000',
+          reuseExistingServer: true,
+          timeout: 120000,
+        },
+        {
+          command: 'pnpm dev:ui',
+          url: 'http://localhost:5173',
+          reuseExistingServer: true,
+          timeout: 120000,
+        },
+      ],
 });

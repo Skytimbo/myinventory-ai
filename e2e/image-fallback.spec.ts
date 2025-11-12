@@ -67,15 +67,11 @@ test.describe('Image Loading Fallback', () => {
     // Navigate to the app (baseURL is configured in playwright.config.ts)
     await page.goto('/');
 
-    // Verify we're on the UI server (port 5173), not the API server (port 5000)
+    // Verify we're on the correct server
     const currentUrl = new URL(page.url());
-    expect(currentUrl.port).toBe('5173');
+    const expectedPort = process.env.CI ? '5000' : '5173';
+    expect(currentUrl.port).toBe(expectedPort);
     expect(currentUrl.hostname).toBe('localhost');
-
-    // Defensive check: if we somehow end up on port 5000, fail immediately
-    if (currentUrl.port === '5000') {
-      throw new Error('Test is running on API server (5000) instead of UI server (5173)');
-    }
 
     // Assert the stub was actually hit
     await expect.poll(() => apiHits, {
