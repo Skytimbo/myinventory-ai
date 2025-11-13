@@ -3,6 +3,8 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { ApiError } from "./errors";
+import { promises as fs } from "fs";
+import path from "path";
 
 const app = express();
 
@@ -49,6 +51,33 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // Validate storage configuration at startup
+  const isReplit = process.env.REPL_ID !== undefined;
+
+  if (isReplit) {
+    // Validate Replit/GCS configuration
+    log("🔧 Storage backend: Google Cloud Storage (Replit)");
+    if (!process.env.PRIVATE_OBJECT_DIR) {
+      log("⚠️  Warning: PRIVATE_OBJECT_DIR not set");
+    }
+    if (!process.env.PUBLIC_OBJECT_SEARCH_PATHS) {
+      log("⚠️  Warning: PUBLIC_OBJECT_SEARCH_PATHS not set");
+    }
+  } else {
+    // Validate local filesystem configuration
+    const localStorageDir = process.env.LOCAL_STORAGE_DIR || path.join(process.cwd(), 'uploads');
+    log(`🔧 Storage backend: Local filesystem (${localStorageDir})`);
+
+    try {
+      // Check if directory exists, create if not
+      await fs.mkdir(localStorageDir, { recursive: true });
+      await fs.access(localStorageDir);
+      log(`✓ Local storage directory ready: ${localStorageDir}`);
+    } catch (error) {
+      log(`⚠️  Warning: Unable to access local storage directory: ${error}`);
+    }
+  }
+
   const server = await registerRoutes(app);
 
   // Error handling middleware
