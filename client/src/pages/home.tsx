@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { InventoryItem } from "@shared/schema";
 import { CameraCapture } from "@/components/CameraCapture";
@@ -8,11 +8,9 @@ import { SearchFilter } from "@/components/SearchFilter";
 import { BarcodeModal } from "@/components/BarcodeModal";
 import { ExportModal } from "@/components/ExportModal";
 import { Button } from "@/components/ui/button";
-import { Download, Loader2, Camera, Package } from "lucide-react";
+import { Upload, Download, Loader2, Camera, Package } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { ObjectUploader } from "@/components/ObjectUploader";
-import type { UploadResult } from "@uppy/core";
 
 export default function Home() {
   const [showCapture, setShowCapture] = useState(false);
@@ -23,6 +21,7 @@ export default function Home() {
   const [selectedLocations, setSelectedLocations] = useState<string[]>([]);
   const [valueRange, setValueRange] = useState<[number, number]>([0, 10000]);
   const [dateRange, setDateRange] = useState<[Date | null, Date | null]>([null, null]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
   const { data: items = [], isLoading } = useQuery<InventoryItem[]>({
@@ -76,30 +75,28 @@ export default function Home() {
     createItemMutation.mutate(formData);
   };
 
-  const handleObjectUpload = async () => {
-    const response = await fetch("/api/objects/upload", {
-      method: "POST",
-    });
-    const data = await response.json();
-    return {
-      method: "PUT" as const,
-      url: data.uploadURL,
-    };
-  };
+  const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
 
-  const handleUploadComplete = async (result: UploadResult<Record<string, unknown>, Record<string, unknown>>) => {
-    const uploadedFile = result.successful[0];
-    if (uploadedFile) {
-      const imageUrl = uploadedFile.uploadURL;
-      
-      const response = await fetch(imageUrl);
-      const blob = await response.blob();
-      
-      const formData = new FormData();
-      formData.append("image", blob, "upload.jpg");
-      formData.append("imageUrl", imageUrl);
-      
-      createItemMutation.mutate(formData);
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+      toast({
+        title: "Invalid File",
+        description: "Please select an image file.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Send file directly to /api/items
+    const formData = new FormData();
+    formData.append("image", file, file.name);
+    createItemMutation.mutate(formData);
+
+    // Reset input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
     }
   };
 
@@ -203,16 +200,23 @@ export default function Home() {
         <div className="container mx-auto px-4 h-16 flex items-center justify-between">
           <h1 className="text-2xl font-semibold" data-testid="text-app-title">MyInventory AI</h1>
           <div className="flex items-center gap-3">
-            <ObjectUploader
-              maxNumberOfFiles={1}
-              maxFileSize={10485760}
-              onGetUploadParameters={handleObjectUpload}
-              onComplete={handleUploadComplete}
-              buttonClassName="hidden sm:flex"
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleFileSelect}
+              className="hidden"
+              data-testid="file-input"
+            />
+            <Button
+              onClick={() => fileInputRef.current?.click()}
+              variant="outline"
+              className="hidden sm:flex"
+              data-testid="button-upload-image"
             >
-              <Download className="w-4 h-4 mr-2" />
+              <Upload className="w-4 h-4 mr-2" />
               Upload Image
-            </ObjectUploader>
+            </Button>
             <Button onClick={() => setShowCapture(true)} data-testid="button-add-item">
               <Camera className="w-4 h-4 mr-2" />
               Add Item
