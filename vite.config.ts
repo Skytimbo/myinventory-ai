@@ -43,6 +43,10 @@ export default defineConfig({
         target: process.env.API_PORT ? `http://localhost:${process.env.API_PORT}` : 'http://localhost:5001',
         changeOrigin: true,
       },
+      '/objects': {
+        target: process.env.API_PORT ? `http://localhost:${process.env.API_PORT}` : 'http://localhost:5001',
+        changeOrigin: true,
+      },
     },
   },
   test: {
