@@ -3,7 +3,7 @@ import { InventoryItem } from "@shared/schema";
 import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Pencil, Trash2, Maximize2, Info, TrendingUp, TrendingDown, Minus, ImageIcon, MapPin } from "lucide-react";
+import { Pencil, Trash2, Maximize2, Info, TrendingUp, TrendingDown, Minus, ImageIcon, MapPin, Images } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   Tooltip,
@@ -29,6 +29,11 @@ export function ItemCard({ item, onDelete, onViewBarcode }: ItemCardProps) {
 
   // Dev-only telemetry
   const imageRetryCountRef = useRef(0);
+
+  // Multi-image support (PRD 0004) - use imageUrls[0] if available, fallback to imageUrl
+  const primaryImageUrl = item.imageUrls?.[0] || item.imageUrl;
+  const imageCount = item.imageUrls?.length || 1;
+  const hasMultipleImages = imageCount > 1;
 
   useEffect(() => {
     if (barcodeRef.current && !barcodeGenerated) {
@@ -57,11 +62,12 @@ export function ItemCard({ item, onDelete, onViewBarcode }: ItemCardProps) {
         {/* Only render img when not in error state */}
         {!imageError && (
           <img
-            src={`${item.imageUrl}?rev=${imageRevision}`}
+            src={`${primaryImageUrl}?rev=${imageRevision}`}
             alt={item.name || 'Item image'}
             loading="lazy"
             onLoad={() => {
               setImageLoading(false);
+              setImageError(false); // Clear error state on successful load
               // Telemetry: Log successful retry
               if (process.env.NODE_ENV !== 'production' && imageRetryCountRef.current > 0) {
                 console.debug('[Telemetry] Image retry success:', {
@@ -81,6 +87,14 @@ export function ItemCard({ item, onDelete, onViewBarcode }: ItemCardProps) {
             )}
             data-testid={`img-item-${item.id}`}
           />
+        )}
+
+        {/* Multi-image count badge (PRD 0004) */}
+        {hasMultipleImages && !imageError && (
+          <div className="absolute top-2 right-2 bg-black/70 backdrop-blur-sm text-white px-2 py-1 rounded-md flex items-center gap-1 text-xs font-medium" data-testid={`badge-image-count-${item.id}`}>
+            <Images className="w-3 h-3" />
+            <span>{imageCount}</span>
+          </div>
         )}
 
         {/* Accessible placeholder UI for error state */}

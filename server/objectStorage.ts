@@ -42,6 +42,17 @@ export class ObjectNotFoundError extends Error {
   }
 }
 
+/**
+ * ObjectStorageService
+ *
+ * Environment-agnostic storage abstraction supporting dual backends:
+ * - Local filesystem (development)
+ * - Google Cloud Storage via Replit sidecar (production)
+ *
+ * FOUNDATION: This service is designed for multi-file scenarios. Methods accept
+ * arbitrary file paths, enabling future multi-image uploads (PRD 0004+).
+ * See FOUNDATION.md Principle 2 for extension patterns.
+ */
 export class ObjectStorageService {
   constructor() {}
 
@@ -78,8 +89,10 @@ export class ObjectStorageService {
       return false;
     }
 
-    // Must match expected pattern: /objects/{category}/{filename}
-    // Valid examples: /objects/items/uuid.jpg, /objects/items/subdirectory/uuid.png
+    // Must match expected pattern: /objects/{category}/{filename} or /objects/{category}/{id}/{index}.{ext}
+    // Valid examples:
+    //   Legacy single-image: /objects/items/uuid.jpg
+    //   Multi-image (PRD 0004): /objects/items/uuid/0.jpg, /objects/items/uuid/1.jpg
     const pathRegex = /^\/objects\/[a-zA-Z0-9_-]+\/[a-zA-Z0-9_\-./]+$/;
     if (!pathRegex.test(objectPath)) {
       return false;
@@ -271,6 +284,16 @@ export class ObjectStorageService {
     }
   }
 
+  /**
+   * Save file to local filesystem storage
+   *
+   * NOTE: This method supports arbitrary file paths, enabling future multi-image
+   * scenarios. Path structure: uploads/{relativePath} where relativePath can be
+   * items/{uuid}.jpg or items/{uuid}/0.jpg for multi-image support.
+   *
+   * @param relativePath - Path relative to uploads directory (e.g., "items/uuid.jpg")
+   * @param buffer - File content as Buffer
+   */
   async saveLocalFile(relativePath: string, buffer: Buffer): Promise<void> {
     const fullPath = path.join(this.getLocalStorageDir(), relativePath);
     const dir = path.dirname(fullPath);

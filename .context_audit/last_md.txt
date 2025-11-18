@@ -1,8 +1,16 @@
 ./CHANGELOG.md
 ./CONTEXT.md
+./FOUNDATION.md
 ./design_guidelines.md
 ./docs/ADRs/ADR-001-db-keys.md
 ./replit.md
 ./tasks/0001-prd-quick-fixes.md
+./tasks/0002-prd-dual-env-image-persistence.md
+./tasks/0003-prd-foundational-architecture.md
+./tasks/0004-prd-media-model-v1.md
 ./tasks/PROTOCOLS.md
+./tasks/execution-plan-0003.md
 ./tasks/tasks-0001-prd-quick-fixes.md
+./tasks/tasks-0002-prd-dual-env-image-persistence.md
+./tasks/tasks-0003-prd-foundational-architecture.md
+./tasks/tasks-0004-prd-media-model-v1.md

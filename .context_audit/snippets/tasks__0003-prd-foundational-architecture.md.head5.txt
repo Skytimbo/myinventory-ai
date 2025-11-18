@@ -1,0 +1,5 @@
+# PRD 0003: Foundational Architecture for a Flexible, Multi-Vertical Inventory Platform
+
+**Status:** Draft
+**Created:** 2025-11-13
+**Last Updated:** 2025-11-13

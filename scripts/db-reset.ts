@@ -26,6 +26,7 @@ async function main() {
         category TEXT,
         tags TEXT,
         image_url TEXT,
+        image_urls TEXT[],
         barcode_data TEXT,
         estimated_value DECIMAL(10, 2),
         value_confidence TEXT,

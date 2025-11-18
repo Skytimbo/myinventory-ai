@@ -228,7 +228,7 @@ test.describe('Image Loading Fallback', () => {
       imageRequestCount++;
       console.log(`[STUB] Image request #${imageRequestCount}`);
 
-      if (imageRequestCount <= 3) {
+      if (imageRequestCount < 3) {
         await route.fulfill({
           status: 500,
           contentType: "text/plain",

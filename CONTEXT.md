@@ -1,14 +1,17 @@
 ---
 version: 1
-last_updated: 2025-11-11
+last_updated: 2025-11-13
 project_name: myinventory-ai
 audit_phase: 1
 format_spec: v1-phase1-yaml-front-matter-sections-0-15
 source_commit: "683dd31d18875a9cf9620678bd89f315c4ac7002"
 machine_readable_index: ".context_audit/doc_inventory.csv"
 verification:
-  sha256_of_this_file: "66cbc4e5ae850d9c7c4c8d5e07d047f81f21d3ff3f69d5547d4319119889fd7d"
+  sha256_of_this_file: "dd902741add7f289330c4e9b31674f470722095fd7145d992cddf18d041fa0f3"
 sources:
+  - path: FOUNDATION.md
+    role: foundational-architecture
+    canonical: true
   - path: tasks/0001-prd-quick-fixes.md
     role: prd-task-plan
     canonical: true
@@ -67,13 +70,14 @@ MyInventory AI is an intelligent inventory management system that leverages AI-p
 
 | Path | Size | Last Modified | Role | Canonical | Status |
 |------|------|---------------|------|-----------|--------|
+| `FOUNDATION.md` | 69,897 bytes | 2025-11-13 | Architectural Principles | ✓ | Active |
 | `tasks/0001-prd-quick-fixes.md` | 25,255 bytes | 2025-11-09 20:17:37 | PRD - Technical Debt Fixes | ✓ | Active |
 | `tasks/tasks-0001-prd-quick-fixes.md` | 14,133 bytes | 2025-11-09 20:17:37 | PRD (duplicate) | ✗ | **DEPRECATED** |
 | `tasks/PROTOCOLS.md` | 9,264 bytes | 2025-11-09 20:17:37 | Development Process Guidelines | ✓ | Active |
 | `CHANGELOG.md` | 1,680 bytes | 2025-11-09 20:39:52 | Release History | ✓ | Active |
 | `design_guidelines.md` | 7,649 bytes | 2025-11-07 11:42:10 | UI/UX Design Standards | ✓ | Active |
 | `replit.md` | 5,981 bytes | 2025-11-09 20:17:37 | Project Overview & Architecture | ✓ | Active |
-| `CONTEXT.md` | — | 2025-11-11 | Documentation Map (this file) | ✓ | Active |
+| `CONTEXT.md` | — | 2025-11-13 | Documentation Map (this file) | ✓ | Active |
 
 **Audit Artifacts:**
 - Full inventory: `.context_audit/doc_inventory.csv`
@@ -162,6 +166,20 @@ See `.context_audit/tree.txt` for full repository structure listing.
 5. Data persisted → PostgreSQL (Neon)
 6. Results cached → TanStack Query
 7. UI updated → React components
+
+### Foundational Principles
+
+MyInventory AI follows 7 core architectural principles defined in `FOUNDATION.md`:
+
+1. **Media as First-Class Concept** - Items will evolve to support multiple media assets (images, PDFs, videos), not just a single imageUrl
+2. **Storage as Environment-Agnostic Abstraction** - ObjectStorageService supports dual backends (local filesystem, GCS) with path for multi-file scenarios
+3. **Upload as Pluggable Mechanism** - Reusable upload utilities (`uploadService.ts`), decoupled from page components
+4. **Containers as Hierarchical Entities** - Future support for property → room → box → item hierarchy using adjacency list pattern
+5. **Extensible Attributes as Flexible Data** - Framework for vertical-specific fields (auto parts, insurance) using JSONB or separate tables
+6. **Search as First-Class Concern** - Architecture designed for full-text search + structured filters with PostgreSQL indexing
+7. **Tests as Behavior Assertions** - E2E tests assert user behavior, not implementation details; maintain determinism through API stubbing
+
+See [FOUNDATION.md](./FOUNDATION.md) for complete guidance, evolution roadmap, integration patterns, and anti-patterns.
 
 ---
 
@@ -469,6 +487,14 @@ PORT=5000
 - `.env` - Local development (gitignored)
 - `.env.example` - Template with documentation
 - CI/CD secrets configured in pipeline
+
+### Foundational Storage Abstraction
+
+MyInventory AI uses an environment-aware storage abstraction (`ObjectStorageService` in `server/objectStorage.ts`) that automatically selects the appropriate backend:
+- **Local Development:** Filesystem storage in `uploads/` directory
+- **Production (Replit):** Google Cloud Storage via Replit sidecar
+
+The storage service is designed to support multi-file scenarios. For extending storage backends or adding multi-image support, refer to `FOUNDATION.md` Principle 2 (Storage as Environment-Agnostic Abstraction) and Integration Patterns.
 
 ---
 

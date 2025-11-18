@@ -1,0 +1,5 @@
+# PRD 0004: Media Model v1 - Multi-Image Support
+
+**Status:** Draft
+**Created:** 2025-11-13
+**Related PRDs:** PRD 0002 (Dual-Environment Storage), PRD 0003 (Foundational Architecture)

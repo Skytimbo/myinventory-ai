@@ -32,13 +32,15 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
+    host: true, // Enable LAN access
+    port: 5173,
     fs: {
       strict: true,
       deny: ["**/.*"],
     },
     proxy: {
       '/api': {
-        target: 'http://localhost:5000',
+        target: process.env.API_PORT ? `http://localhost:${process.env.API_PORT}` : 'http://localhost:5001',
         changeOrigin: true,
       },
     },

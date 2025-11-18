@@ -1,5 +1,5 @@
 ---
 version: 1
-last_updated: 2025-11-11
+last_updated: 2025-11-13
 project_name: myinventory-ai
 audit_phase: 1

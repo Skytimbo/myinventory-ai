@@ -1,8 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { storage } from "./storage";
-import { analyzeImage } from "./openai";
-import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
+import type { AppServices } from "./services";
+import { ObjectNotFoundError } from "./objectStorage";
 import multer from "multer";
 import { randomUUID } from "crypto";
 import { wrap, ApiError } from "./errors";
@@ -16,8 +15,18 @@ const upload = multer({
 // Check if running on Replit or locally
 const isReplit = process.env.REPL_ID !== undefined;
 
-export async function registerRoutes(app: Express): Promise<Server> {
-  const objectStorageService = new ObjectStorageService();
+// MIME type to file extension mapping
+// FOUNDATION: See FOUNDATION.md Principle 1 for guidance on adding new media formats
+const mimeToExt: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  // Future formats: 'image/avif' → 'avif', 'image/heic' → 'heic', 'video/mp4' → 'mp4', 'application/pdf' → 'pdf'
+};
+
+export async function registerRoutes(app: Express, services: AppServices): Promise<Server> {
+  // Destructure services for convenient access in route handlers
+  const { storage, objectStorage, imageAnalysis } = services;
 
   // Multer error handler for file size limits
   app.use((error: any, req: any, res: any, next: any) => {
@@ -47,71 +56,116 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json(item);
   }));
 
-  // Create new inventory item with image analysis
-  app.post("/api/items", upload.single("image"), wrap(async (req, res) => {
-    if (!req.file) {
-      throw new ApiError(400, 'NO_IMAGE', 'No image provided');
+  // Create new inventory item with image analysis (PRD 0004: Multi-image support)
+  app.post("/api/items", upload.fields([
+    { name: 'images', maxCount: 10 },  // New multi-image clients (PRD 0004)
+    { name: 'image', maxCount: 1 }      // Legacy single-image clients (backwards compat)
+  ]), wrap(async (req, res) => {
+    // Normalize to array: support both "images[]" (new) and "image" (legacy)
+    const uploadedFiles = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+    let files: Express.Multer.File[] = [];
+
+    if (uploadedFiles) {
+      // Prefer "images" array if present (new multi-image flow)
+      if (uploadedFiles.images && uploadedFiles.images.length > 0) {
+        files = uploadedFiles.images;
+      }
+      // Fallback to "image" field (legacy single-image flow)
+      else if (uploadedFiles.image && uploadedFiles.image.length > 0) {
+        files = uploadedFiles.image;
+      }
     }
 
-    // Validate file type using both mimetype and magic-number sniffing
-    const validation = validateUploadedFile(req.file);
-    if (!validation.valid) {
-      throw new ApiError(400, 'INVALID_FILE_TYPE', validation.error || 'Invalid file type');
+    if (files.length === 0) {
+      throw new ApiError(400, 'NO_IMAGE', 'No images provided. Use "images" field for multiple images or "image" for single image.');
     }
 
-    // Convert image to base64 for AI analysis
-    const imageBase64 = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
+    // Validate all uploaded files
+    for (const file of files) {
+      const validation = validateUploadedFile(file);
+      if (!validation.valid) {
+        throw new ApiError(400, 'INVALID_FILE_TYPE', validation.error || 'Invalid file type');
+      }
+    }
 
-    // Analyze image with AI
-    const analysis = await analyzeImage(imageBase64);
+    // Generate item ID once for all images
+    const itemId = randomUUID();
 
-    // Save image to storage (local filesystem or Replit object storage)
-    const objectId = randomUUID();
-    const imageUrl = `/objects/items/${objectId}.jpg`;
+    // Run AI analysis only on first image (primary) - PRD 0004
+    const primaryFile = files[0];
+    const imageBase64 = `data:${primaryFile.mimetype};base64,${primaryFile.buffer.toString("base64")}`;
+    const analysis = await imageAnalysis.analyzeImage(imageBase64);
 
+    // Generate storage paths and URLs for all images
+    const imageUrls: string[] = [];
+
+    // Save all images to storage
     try {
-      if (isReplit) {
-        // Use Replit object storage
-        const privateObjectDir = objectStorageService.getPrivateObjectDir();
-        const fullPath = `${privateObjectDir}/items/${objectId}.jpg`;
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const ext = mimeToExt[file.mimetype] || 'jpg';
 
-        const pathParts = fullPath.split("/");
-        const bucketName = pathParts[1];
-        const objectName = pathParts.slice(2).join("/");
+        // Multi-image path format: /objects/items/{itemId}/{index}.{ext}
+        // Single-image legacy format: /objects/items/{itemId}.{ext}
+        let imageUrl: string;
+        let storagePath: string;
 
-        const bucket = await import("./objectStorage").then(m => m.objectStorageClient.bucket(bucketName));
-        const file = bucket.file(objectName);
+        if (files.length === 1) {
+          // Legacy single-image format for backwards compatibility
+          imageUrl = `/objects/items/${itemId}.${ext}`;
+          storagePath = `items/${itemId}.${ext}`;
+        } else {
+          // Multi-image format with index
+          imageUrl = `/objects/items/${itemId}/${i}.${ext}`;
+          storagePath = `items/${itemId}/${i}.${ext}`;
+        }
 
-        await file.save(req.file.buffer, {
-          contentType: req.file.mimetype,
-          metadata: {
+        imageUrls.push(imageUrl);
+
+        if (isReplit) {
+          // Use Replit object storage
+          const privateObjectDir = objectStorage.getPrivateObjectDir();
+          const fullPath = `${privateObjectDir}/${storagePath}`;
+
+          const pathParts = fullPath.split("/");
+          const bucketName = pathParts[1];
+          const objectName = pathParts.slice(2).join("/");
+
+          const bucket = await import("./objectStorage").then(m => m.objectStorageClient.bucket(bucketName));
+          const fileObj = bucket.file(objectName);
+
+          await fileObj.save(file.buffer, {
+            contentType: file.mimetype,
             metadata: {
-              "custom:aclPolicy": JSON.stringify({
-                owner: "system",
-                visibility: "public"
-              })
+              metadata: {
+                "custom:aclPolicy": JSON.stringify({
+                  owner: "system",
+                  visibility: "public"
+                })
+              }
             }
-          }
-        });
-      } else {
-        // Use local filesystem storage
-        await objectStorageService.saveLocalFile(`items/${objectId}.jpg`, req.file.buffer);
+          });
+        } else {
+          // Use local filesystem storage
+          await objectStorage.saveLocalFile(storagePath, file.buffer);
+        }
       }
     } catch (error) {
       console.error('Storage error:', error);
-      throw new ApiError(500, 'STORAGE_ERROR', 'Failed to save image');
+      throw new ApiError(500, 'STORAGE_ERROR', 'Failed to save images');
     }
 
     // Generate barcode data (using item ID)
     const barcodeData = `INV-${Date.now()}-${randomUUID().slice(0, 8).toUpperCase()}`;
 
-    // Create inventory item
+    // Create inventory item with both imageUrl (primary) and imageUrls (all images)
     const item = await storage.createItem({
       name: analysis.name,
       description: analysis.description,
       category: analysis.category,
       tags: analysis.tags,
-      imageUrl,
+      imageUrl: imageUrls[0], // Primary image
+      imageUrls: imageUrls,   // All images (PRD 0004)
       barcodeData,
       estimatedValue: analysis.estimatedValue,
     });
@@ -132,12 +186,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/objects/:objectPath(*)", wrap(async (req, res) => {
     if (isReplit) {
       // Serve from Replit object storage
-      const objectFile = await objectStorageService.getObjectEntityFile(req.path);
-      objectStorageService.downloadObject(objectFile, res);
+      const objectFile = await objectStorage.getObjectEntityFile(req.path);
+      objectStorage.downloadObject(objectFile, res);
     } else {
       // Serve from local filesystem
-      const localPath = await objectStorageService.getLocalObjectFile(req.path);
-      objectStorageService.downloadLocalObject(localPath, res);
+      const localPath = await objectStorage.getLocalObjectFile(req.path);
+      objectStorage.downloadLocalObject(localPath, res);
     }
   }));
 

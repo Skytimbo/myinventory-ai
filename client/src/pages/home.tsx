@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Upload, Download, Loader2, Camera, Package } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import { createItemUploadFormData, createItemMultiUploadFormData } from "@/lib/uploadService";
 
 export default function Home() {
   const [showCapture, setShowCapture] = useState(false);
@@ -63,35 +64,56 @@ export default function Home() {
   });
 
   const handleImageCapture = async (imageDataUrl: string, location?: string) => {
-    const formData = new FormData();
-    
     const blob = await fetch(imageDataUrl).then(res => res.blob());
-    formData.append("image", blob, "capture.jpg");
-    
+    const formData = createItemUploadFormData(blob, "capture.jpg");
+
     if (location) {
       formData.append("location", location);
     }
-    
+
     createItemMutation.mutate(formData);
   };
 
   const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
+    const fileList = event.target.files;
+    if (!fileList || fileList.length === 0) return;
 
-    // Validate file type
-    if (!file.type.startsWith('image/')) {
+    // Convert FileList to array
+    const filesArray = Array.from(fileList);
+
+    // Validate max 10 images (PRD 0004)
+    if (filesArray.length > 10) {
       toast({
-        title: "Invalid File",
-        description: "Please select an image file.",
+        title: "Too Many Files",
+        description: "Maximum 10 images allowed per item.",
         variant: "destructive",
       });
       return;
     }
 
-    // Send file directly to /api/items
-    const formData = new FormData();
-    formData.append("image", file, file.name);
+    // Validate file types
+    for (const file of filesArray) {
+      if (!file.type.startsWith('image/')) {
+        toast({
+          title: "Invalid File",
+          description: "Please select only image files.",
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+
+    // Create FormData using appropriate function based on file count
+    let formData: FormData;
+    if (filesArray.length === 1) {
+      // Single-image upload (backwards compatible)
+      formData = createItemUploadFormData(filesArray[0], filesArray[0].name);
+    } else {
+      // Multi-image upload (PRD 0004)
+      const filenames = filesArray.map(f => f.name);
+      formData = createItemMultiUploadFormData(filesArray, filenames);
+    }
+
     createItemMutation.mutate(formData);
 
     // Reset input
@@ -204,6 +226,7 @@ export default function Home() {
               ref={fileInputRef}
               type="file"
               accept="image/*"
+              multiple
               onChange={handleFileSelect}
               className="hidden"
               data-testid="file-input"

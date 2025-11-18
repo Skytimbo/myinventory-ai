@@ -9,6 +9,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Download } from "lucide-react";
 import JsBarcode from "jsbarcode";
+import { ItemDetailGallery } from "./ItemDetailGallery";
 
 interface BarcodeModalProps {
   item: InventoryItem | null;
@@ -49,18 +50,24 @@ export function BarcodeModal({ item, isOpen, onClose }: BarcodeModalProps) {
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-lg" data-testid="dialog-barcode">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" data-testid="dialog-barcode">
         <DialogHeader>
           <DialogTitle data-testid="text-barcode-title">{item.name}</DialogTitle>
         </DialogHeader>
-        <div className="flex flex-col items-center gap-6 py-6">
-          <div className="bg-white p-6 rounded-lg">
-            <canvas ref={barcodeRef} data-testid="canvas-barcode-large" />
+        <div className="flex flex-col gap-6 py-6">
+          {/* Multi-image gallery (PRD 0004) */}
+          <ItemDetailGallery item={item} />
+
+          {/* Barcode section */}
+          <div className="flex flex-col items-center gap-4">
+            <div className="bg-white p-6 rounded-lg">
+              <canvas ref={barcodeRef} data-testid="canvas-barcode-large" />
+            </div>
+            <Button onClick={downloadBarcode} className="w-full" data-testid="button-download-barcode">
+              <Download className="w-4 h-4 mr-2" />
+              Download Barcode
+            </Button>
           </div>
-          <Button onClick={downloadBarcode} className="w-full" data-testid="button-download-barcode">
-            <Download className="w-4 h-4 mr-2" />
-            Download Barcode
-          </Button>
         </div>
       </DialogContent>
     </Dialog>

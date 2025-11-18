@@ -1,0 +1,5 @@
+# Task List: PRD 0003 - Foundational Architecture
+
+**PRD:** `0003-prd-foundational-architecture.md`
+**Status:** Phase 1 - Parent Tasks
+**Created:** 2025-11-13

@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
+import { loadAppConfig, createProdServices } from "./services";
 import { setupVite, serveStatic, log } from "./vite";
 import { ApiError } from "./errors";
 import { promises as fs } from "fs";
@@ -51,34 +52,26 @@ app.use((req, res, next) => {
 });
 
 (async () => {
-  // Validate storage configuration at startup
-  const isReplit = process.env.REPL_ID !== undefined;
+  // Load and validate application configuration (PRD 0005)
+  const config = loadAppConfig();
+  log(`🔧 Storage backend: ${config.isReplit ? 'Google Cloud Storage (Replit)' : `Local filesystem (${config.storageConfig.localStorageDir})`}`);
 
-  if (isReplit) {
-    // Validate Replit/GCS configuration
-    log("🔧 Storage backend: Google Cloud Storage (Replit)");
-    if (!process.env.PRIVATE_OBJECT_DIR) {
-      log("⚠️  Warning: PRIVATE_OBJECT_DIR not set");
-    }
-    if (!process.env.PUBLIC_OBJECT_SEARCH_PATHS) {
-      log("⚠️  Warning: PUBLIC_OBJECT_SEARCH_PATHS not set");
-    }
-  } else {
-    // Validate local filesystem configuration
-    const localStorageDir = process.env.LOCAL_STORAGE_DIR || path.join(process.cwd(), 'uploads');
-    log(`🔧 Storage backend: Local filesystem (${localStorageDir})`);
-
+  // Ensure local storage directory exists
+  if (!config.isReplit) {
     try {
-      // Check if directory exists, create if not
-      await fs.mkdir(localStorageDir, { recursive: true });
-      await fs.access(localStorageDir);
-      log(`✓ Local storage directory ready: ${localStorageDir}`);
+      await fs.mkdir(config.storageConfig.localStorageDir, { recursive: true });
+      await fs.access(config.storageConfig.localStorageDir);
+      log(`✓ Local storage directory ready: ${config.storageConfig.localStorageDir}`);
     } catch (error) {
       log(`⚠️  Warning: Unable to access local storage directory: ${error}`);
     }
   }
 
-  const server = await registerRoutes(app);
+  // Initialize service container (PRD 0005)
+  const services = await createProdServices(config);
+
+  // Register routes with injected services (PRD 0005)
+  const server = await registerRoutes(app, services);
 
   // Error handling middleware
   const isProd = process.env.NODE_ENV === 'production';

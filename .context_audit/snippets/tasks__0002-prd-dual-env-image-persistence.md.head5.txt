@@ -1,0 +1,5 @@
+# PRD 0002: Dual-Environment Image Persistence
+
+**Status:** Draft
+**Created:** 2025-11-12
+**Last Updated:** 2025-11-12

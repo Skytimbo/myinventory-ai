@@ -1,0 +1,5 @@
+# Task List: PRD 0004 - Media Model v1: Multi-Image Support
+1
+**PRD:** `0004-prd-media-model-v1.md`
+**Status:** COMPLETE
+**Created:** 2025-11-13

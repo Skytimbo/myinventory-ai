@@ -23,10 +23,18 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getItems(): Promise<InventoryItem[]> {
-    return await this.db
+    const items = await this.db
       .select()
       .from(inventoryItems)
       .orderBy(desc(inventoryItems.createdAt));
+
+    // Lazy migration: populate imageUrls from imageUrl if null (PRD 0004 - backwards compatibility)
+    return items.map(item => {
+      if (!item.imageUrls) {
+        item.imageUrls = [item.imageUrl];
+      }
+      return item;
+    });
   }
 
   async getItem(id: string): Promise<InventoryItem | undefined> {
@@ -35,7 +43,14 @@ export class DatabaseStorage implements IStorage {
       .from(inventoryItems)
       .where(eq(inventoryItems.id, id))
       .limit(1);
-    return results[0];
+    const item = results[0];
+
+    // Lazy migration: populate imageUrls from imageUrl if null (PRD 0004 - backwards compatibility)
+    if (item && !item.imageUrls) {
+      item.imageUrls = [item.imageUrl];
+    }
+
+    return item;
   }
 
   async createItem(insertItem: InsertInventoryItem): Promise<InventoryItem> {
@@ -55,4 +70,4 @@ export class DatabaseStorage implements IStorage {
   }
 }
 
-export const storage = new DatabaseStorage();
+// Singleton removed: Use createProdServices() or createTestServices() from services.ts instead (PRD 0005)
