@@ -1,4 +1,10 @@
 import 'dotenv/config';
+
+// Process-level crash traps for debugging
+process.on("uncaughtException", e => console.error("uncaughtException:", e));
+process.on("unhandledRejection", e => console.error("unhandledRejection:", e));
+process.on("exit", code => console.error("exit code:", code));
+
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { loadAppConfig, createProdServices } from "./services";
@@ -52,23 +58,27 @@ app.use((req, res, next) => {
 });
 
 (async () => {
-  // Load and validate application configuration (PRD 0005)
-  const config = loadAppConfig();
-  log(`🔧 Storage backend: ${config.isReplit ? 'Google Cloud Storage (Replit)' : `Local filesystem (${config.storageConfig.localStorageDir})`}`);
+  try {
+    console.log("A: entering main");
 
-  // Ensure local storage directory exists
-  if (!config.isReplit) {
-    try {
-      await fs.mkdir(config.storageConfig.localStorageDir, { recursive: true });
-      await fs.access(config.storageConfig.localStorageDir);
-      log(`✓ Local storage directory ready: ${config.storageConfig.localStorageDir}`);
-    } catch (error) {
-      log(`⚠️  Warning: Unable to access local storage directory: ${error}`);
+    // Load and validate application configuration (PRD 0005)
+    const config = loadAppConfig();
+    log(`🔧 Storage backend: ${config.isReplit ? 'Google Cloud Storage (Replit)' : `Local filesystem (${config.storageConfig.localStorageDir})`}`);
+
+    // Ensure local storage directory exists
+    if (!config.isReplit) {
+      try {
+        await fs.mkdir(config.storageConfig.localStorageDir, { recursive: true });
+        await fs.access(config.storageConfig.localStorageDir);
+        log(`✓ Local storage directory ready: ${config.storageConfig.localStorageDir}`);
+      } catch (error) {
+        log(`⚠️  Warning: Unable to access local storage directory: ${error}`);
+      }
     }
-  }
 
-  // Initialize service container (PRD 0005)
-  const services = await createProdServices(config);
+    // Initialize service container (PRD 0005)
+    const services = await createProdServices(config);
+    console.log("B: after createProdServices");
 
   // Register routes with injected services (PRD 0005)
   const server = await registerRoutes(app, services);
@@ -130,7 +140,14 @@ app.use((req, res, next) => {
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || '5000', 10);
+  console.log("C: before app.listen");
+  server.on("error", (err) => console.error("listen error:", err));
   server.listen(port, "0.0.0.0", () => {
+    console.log("D: inside listen callback");
     log(`serving on port ${port}`);
   });
+  } catch (err) {
+    console.error("main() caught error:", err);
+    process.exit(1);
+  }
 })();
