@@ -222,7 +222,7 @@ test.describe('Image Loading Fallback', () => {
   test('should handle multiple image failures gracefully', async ({ page }) => {
     let imageRequestCount = 0;
 
-    // Fail first 3 requests, succeed on 4th
+    // Fail first 2 retry requests, succeed on 3rd retry
     await page.unroute(/\/broken\.jpg/);
     await page.route(/\/broken\.jpg(\?.*)?$/, async route => {
       imageRequestCount++;
@@ -254,28 +254,30 @@ test.describe('Image Loading Fallback', () => {
     // Retry multiple times
     const retryButton = page.locator('[data-testid^="button-retry-"]').first();
 
-    // First retry (will fail - request #2)
+    // First retry (will fail - request #1)
     await retryButton.click();
     await page.waitForTimeout(800);
     await expect(placeholder).toBeVisible();
     console.log('[TEST] First retry failed as expected');
 
-    // Second retry (will fail - request #3)
+    // Second retry (will fail - request #2)
     await retryButton.click();
     await page.waitForTimeout(800);
     await expect(placeholder).toBeVisible();
     console.log('[TEST] Second retry failed as expected');
 
-    // Third retry (will succeed - request #4)
+    // Third retry (will succeed - request #3)
     await retryButton.click();
     console.log('[TEST] Third retry clicked, waiting for success');
 
-    // Wait for the image to actually load
-    const img = page.locator('img[data-testid^="img-item-"]').first();
-    await img.waitFor({ state: "visible", timeout: 5000 });
+    // Wait for placeholder to disappear (indicates successful load)
+    await expect(placeholder).toHaveCount(0, { timeout: 5000 });
 
-    // Placeholder and retry button should now be hidden
-    await expect(placeholder).toHaveCount(0);
+    // Verify image is now visible
+    const img = page.locator('img[data-testid^="img-item-"]').first();
+    await expect(img).toBeVisible();
+
+    // Verify retry button is also gone
     await expect(retryButton).toHaveCount(0);
   });
 });
