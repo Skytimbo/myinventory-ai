@@ -6,6 +6,7 @@ import multer from "multer";
 import { randomUUID } from "crypto";
 import { wrap, ApiError } from "./errors";
 import { validateUploadedFile } from "./fileValidation";
+import { analyzeImagePolicy, type AnalysisResult } from "./modelPolicy";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -93,8 +94,25 @@ export async function registerRoutes(app: Express, services: AppServices): Promi
 
     // Run AI analysis only on first image (primary) - PRD 0004
     const primaryFile = files[0];
-    const imageBase64 = `data:${primaryFile.mimetype};base64,${primaryFile.buffer.toString("base64")}`;
-    const analysis = await imageAnalysis.analyzeImage(imageBase64);
+
+    let analysis: AnalysisResult;
+    try {
+      analysis = await analyzeImagePolicy(primaryFile.buffer);
+    } catch (err) {
+      console.error("AI analysis failed:", err);
+      // Use fallback values - null for value fields, not "0.00"
+      analysis = {
+        name: "Item",
+        description: "AI analysis temporarily unavailable. Please add details manually.",
+        category: "Uncategorized",
+        tags: [],
+        confidence: 0,
+        estimatedValue: null,
+        valueConfidence: null,
+        valueRationale: null,
+        raw: null,
+      };
+    }
 
     // Generate storage paths and URLs for all images
     const imageUrls: string[] = [];
@@ -168,6 +186,8 @@ export async function registerRoutes(app: Express, services: AppServices): Promi
       imageUrls: imageUrls,   // All images (PRD 0004)
       barcodeData,
       estimatedValue: analysis.estimatedValue,
+      valueConfidence: analysis.valueConfidence,
+      valueRationale: analysis.valueRationale,
     });
 
     res.json(item);
