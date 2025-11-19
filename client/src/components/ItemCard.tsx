@@ -20,12 +20,17 @@ interface ItemCardProps {
 
 export function ItemCard({ item, onDelete, onViewBarcode }: ItemCardProps) {
   const barcodeRef = useRef<HTMLCanvasElement>(null);
+  const descriptionRef = useRef<HTMLParagraphElement>(null);
   const [barcodeGenerated, setBarcodeGenerated] = useState(false);
 
   // Image loading state
   const [imageError, setImageError] = useState(false);
   const [imageLoading, setImageLoading] = useState(true);
   const [imageRevision, setImageRevision] = useState(0);
+
+  // Description expansion state
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
+  const [isDescriptionTruncated, setIsDescriptionTruncated] = useState(false);
 
   // Dev-only telemetry
   const imageRetryCountRef = useRef(0);
@@ -50,6 +55,15 @@ export function ItemCard({ item, onDelete, onViewBarcode }: ItemCardProps) {
       }
     }
   }, [item.barcodeData, barcodeGenerated]);
+
+  // Detect if description is truncated (needs "Show more" toggle)
+  useEffect(() => {
+    const el = descriptionRef.current;
+    if (el && !descriptionExpanded) {
+      // Check if text overflows the 2-line clamp
+      setIsDescriptionTruncated(el.scrollHeight > el.clientHeight);
+    }
+  }, [item.description, descriptionExpanded]);
 
   return (
     <Card className="overflow-hidden hover-elevate" data-testid={`card-item-${item.id}`}>
@@ -138,9 +152,26 @@ export function ItemCard({ item, onDelete, onViewBarcode }: ItemCardProps) {
           <h3 className="text-lg font-medium text-foreground mb-1 line-clamp-1" data-testid={`text-name-${item.id}`}>
             {item.name}
           </h3>
-          <p className="text-sm text-muted-foreground line-clamp-2" data-testid={`text-description-${item.id}`}>
+          <p
+            ref={descriptionRef}
+            className={cn(
+              "text-sm text-muted-foreground",
+              !descriptionExpanded && "line-clamp-2"
+            )}
+            data-testid={`text-description-${item.id}`}
+          >
             {item.description}
           </p>
+          {item.description && (isDescriptionTruncated || descriptionExpanded) && (
+            <button
+              type="button"
+              onClick={() => setDescriptionExpanded(!descriptionExpanded)}
+              className="text-sm text-blue-600 hover:underline cursor-pointer mt-1"
+              data-testid={`button-toggle-description-${item.id}`}
+            >
+              {descriptionExpanded ? "Show less" : "Show more"}
+            </button>
+          )}
         </div>
 
         {item.location && (
