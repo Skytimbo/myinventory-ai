@@ -27,7 +27,7 @@ const mimeToExt: Record<string, string> = {
 
 export async function registerRoutes(app: Express, services: AppServices): Promise<Server> {
   // Destructure services for convenient access in route handlers
-  const { storage, objectStorage, imageAnalysis } = services;
+  const { storage, objectStorage } = services;
 
   // Multer error handler for file size limits
   app.use((error: any, req: any, res: any, next: any) => {

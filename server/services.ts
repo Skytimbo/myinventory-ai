@@ -15,7 +15,6 @@ import path from 'path';
 import { randomUUID } from 'crypto';
 import type { IStorage } from './storage';
 import type { ObjectStorageService } from './objectStorage';
-import type { ImageAnalysisResult } from './openai';
 import type { InventoryItem, InsertInventoryItem } from '@shared/schema';
 
 /**
@@ -69,10 +68,10 @@ export function loadAppConfig(): AppConfig {
     );
   }
 
-  const openaiApiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+  const openaiApiKey = process.env.OPENAI_API_KEY;
   if (!openaiApiKey) {
     throw new Error(
-      'AI_INTEGRATIONS_OPENAI_API_KEY environment variable is required. ' +
+      'OPENAI_API_KEY environment variable is required. ' +
       'Please set it to your OpenAI API key.'
     );
   }
@@ -140,10 +139,8 @@ export interface AppServices {
   /** Object storage service (local filesystem or GCS) */
   objectStorage: ObjectStorageService;
 
-  /** Image analysis service powered by AI */
-  imageAnalysis: {
-    analyzeImage(imageBase64: string): Promise<ImageAnalysisResult>;
-  };
+  // Note: Image analysis is handled directly via analyzeImagePolicy() in modelPolicy.ts
+  // The service container pattern is not used for AI analysis
 }
 
 /**
@@ -159,7 +156,6 @@ export async function createProdServices(_config: AppConfig): Promise<AppService
   // Dynamically import services to avoid circular dependencies
   const { DatabaseStorage } = await import('./storage');
   const { ObjectStorageService } = await import('./objectStorage');
-  const { analyzeImage } = await import('./openai');
 
   // Instantiate production services
   // Note: Current implementations read env vars directly from process.env
@@ -170,9 +166,6 @@ export async function createProdServices(_config: AppConfig): Promise<AppService
   return {
     storage,
     objectStorage,
-    imageAnalysis: {
-      analyzeImage,
-    },
   };
 }
 
@@ -366,32 +359,14 @@ export class FakeObjectStorageService {
 }
 
 /**
- * Fake image analysis service for testing
- *
- * Returns deterministic, canned AI responses instead of calling the OpenAI API.
- * Useful for fast, predictable tests that don't require external API calls.
- */
-export const fakeImageAnalysis = {
-  async analyzeImage(_imageBase64: string): Promise<ImageAnalysisResult> {
-    // Return deterministic canned response for testing
-    return {
-      name: "Test Item",
-      description: "This is a test item analyzed by the fake AI service.",
-      category: "Electronics",
-      tags: ["test", "fake", "deterministic"],
-      estimatedValue: "42.00",
-      valueConfidence: "high",
-      valueRationale: "Fake analysis always returns this value",
-    };
-  },
-};
-
-/**
  * Create test services with fake implementations
  *
  * This factory instantiates all backend services using in-memory fakes.
  * Services are fast, deterministic, and require no external dependencies.
  * Ideal for unit tests, integration tests, and E2E tests.
+ *
+ * Note: Image analysis is tested by mocking OpenAI clients directly in test files,
+ * not through this service container.
  *
  * @param _config - Validated application configuration (reserved for future use)
  * @returns {AppServices} Container with fake service instances
@@ -403,6 +378,5 @@ export async function createTestServices(_config: AppConfig): Promise<AppService
   return {
     storage,
     objectStorage,
-    imageAnalysis: fakeImageAnalysis,
   };
 }
