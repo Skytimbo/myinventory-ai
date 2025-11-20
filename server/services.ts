@@ -70,19 +70,10 @@ export function loadAppConfig(): AppConfig {
 
   const openaiApiKey = process.env.OPENAI_API_KEY;
   if (!openaiApiKey) {
-    throw new Error(
-      'OPENAI_API_KEY environment variable is required. ' +
-      'Please set it to your OpenAI API key.'
-    );
+    throw new Error("Missing OPENAI_API_KEY");
   }
 
-  const openaiBaseUrl = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
-  if (!openaiBaseUrl) {
-    throw new Error(
-      'AI_INTEGRATIONS_OPENAI_BASE_URL environment variable is required. ' +
-      'Please set it to your OpenAI API base URL.'
-    );
-  }
+  const openaiBaseUrl = process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
 
   // Auto-detect environment
   const isReplit = process.env.REPL_ID !== undefined;

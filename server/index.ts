@@ -1,5 +1,8 @@
 import 'dotenv/config';
 
+// Diagnostic: Show API key prefix at startup (BEFORE any services are loaded)
+console.log("Loaded API key prefix:", process.env.OPENAI_API_KEY?.slice(0, 10) || "NOT SET");
+
 // Process-level crash traps for debugging
 process.on("uncaughtException", e => console.error("uncaughtException:", e));
 process.on("unhandledRejection", e => console.error("unhandledRejection:", e));
