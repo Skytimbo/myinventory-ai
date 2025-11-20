@@ -1,6 +1,7 @@
 { pkgs }: {
   deps = [
     pkgs.nodejs_20
-    pkgs.pnpm
+    pkgs.nodePackages.pnpm
+    pkgs.git
   ];
 }
