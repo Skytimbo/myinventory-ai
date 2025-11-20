@@ -18,9 +18,13 @@ async function main() {
     await client.query(`DROP TABLE IF EXISTS inventory_items CASCADE;`);
     console.log('✓ Dropped inventory_items table');
 
+    // Enable pgcrypto for gen_random_uuid()
+    await client.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
+    console.log('✓ Enabled pgcrypto extension');
+
     await client.query(`
       CREATE TABLE inventory_items (
-        id TEXT PRIMARY KEY,
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         name TEXT NOT NULL,
         description TEXT,
         category TEXT,

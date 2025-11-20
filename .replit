@@ -1,5 +1,5 @@
 modules = ["nodejs-20", "web", "postgresql-16"]
-run = "npm run dev"
+run = "pnpm dev"
 hidden = [".config", ".git", "generated-icon.png", "node_modules", "dist"]
 
 [nix]
@@ -8,8 +8,8 @@ packages = ["gh"]
 
 [deployment]
 deploymentTarget = "autoscale"
-build = ["npm", "run", "build"]
-run = ["npm", "run", "start"]
+build = ["sh", "-c", "pnpm install && pnpm db:push && pnpm build"]
+run = ["sh", "-c", "pnpm start"]
 
 [[ports]]
 localPort = 5000
@@ -68,7 +68,7 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "npm run dev"
+args = "pnpm dev"
 waitForPort = 5000
 
 [agent]

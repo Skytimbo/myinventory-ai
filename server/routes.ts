@@ -29,6 +29,15 @@ export async function registerRoutes(app: Express, services: AppServices): Promi
   // Destructure services for convenient access in route handlers
   const { storage, objectStorage } = services;
 
+  // Health check endpoint for Replit deployment monitoring
+  app.get("/api/health", (req, res) => {
+    res.json({
+      status: "ok",
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV || "development"
+    });
+  });
+
   // Multer error handler for file size limits
   app.use((error: any, req: any, res: any, next: any) => {
     if (error instanceof multer.MulterError) {
