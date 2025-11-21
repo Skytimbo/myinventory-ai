@@ -27,11 +27,8 @@ export interface AppConfig {
   /** OpenAI API key for image analysis (required) */
   openaiApiKey: string;
 
-  /** OpenAI API base URL (required) */
+  /** OpenAI API base URL (optional, defaults to OpenAI API) */
   openaiBaseUrl: string;
-
-  /** Whether running on Replit (auto-detected from REPL_ID) */
-  isReplit: boolean;
 
   /** Node environment mode */
   nodeEnv: 'development' | 'production' | 'test';
@@ -39,17 +36,8 @@ export interface AppConfig {
   /** Server port */
   port: number;
 
-  /** Storage backend configuration */
-  storageConfig: {
-    /** Private object storage directory (Replit only) */
-    privateObjectDir?: string;
-
-    /** Public object search paths (Replit only) */
-    publicObjectSearchPaths?: string[];
-
-    /** Local storage directory (local dev, default: ./uploads) */
-    localStorageDir: string;
-  };
+  /** Local storage directory for uploaded files */
+  localStorageDir: string;
 }
 
 /**
@@ -75,44 +63,20 @@ export function loadAppConfig(): AppConfig {
 
   const openaiBaseUrl = process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
 
-  // Auto-detect environment
-  const isReplit = process.env.REPL_ID !== undefined;
+  // Server configuration
   const nodeEnv = (process.env.NODE_ENV || 'development') as 'development' | 'production' | 'test';
   const port = parseInt(process.env.PORT || '5000', 10);
 
-  // Storage configuration
-  const storageConfig = {
-    privateObjectDir: process.env.PRIVATE_OBJECT_DIR,
-    publicObjectSearchPaths: process.env.PUBLIC_OBJECT_SEARCH_PATHS
-      ? process.env.PUBLIC_OBJECT_SEARCH_PATHS.split(',').map(p => p.trim())
-      : undefined,
-    localStorageDir: process.env.LOCAL_STORAGE_DIR || path.join(process.cwd(), 'uploads'),
-  };
-
-  // Validate Replit-specific configuration
-  if (isReplit) {
-    if (!storageConfig.privateObjectDir) {
-      throw new Error(
-        'PRIVATE_OBJECT_DIR environment variable is required when running on Replit. ' +
-        'Please create a bucket in Object Storage and set this variable.'
-      );
-    }
-    if (!storageConfig.publicObjectSearchPaths || storageConfig.publicObjectSearchPaths.length === 0) {
-      throw new Error(
-        'PUBLIC_OBJECT_SEARCH_PATHS environment variable is required when running on Replit. ' +
-        'Please set it to a comma-separated list of public object paths.'
-      );
-    }
-  }
+  // Local storage directory (development: ./uploads, Railway: /app/uploads)
+  const localStorageDir = process.env.LOCAL_STORAGE_DIR || path.join(process.cwd(), 'uploads');
 
   return {
     databaseUrl,
     openaiApiKey,
     openaiBaseUrl,
-    isReplit,
     nodeEnv,
     port,
-    storageConfig,
+    localStorageDir,
   };
 }
 
@@ -127,7 +91,7 @@ export interface AppServices {
   /** Database access layer for inventory items */
   storage: IStorage;
 
-  /** Object storage service (local filesystem or GCS) */
+  /** Object storage service (local filesystem) */
   objectStorage: ObjectStorageService;
 
   // Note: Image analysis is handled directly via analyzeImagePolicy() in modelPolicy.ts

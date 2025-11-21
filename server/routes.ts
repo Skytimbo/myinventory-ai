@@ -13,9 +13,6 @@ const upload = multer({
   limits: { fileSize: 10485760 } // 10MB limit
 });
 
-// Check if running on Replit or locally
-const isReplit = process.env.REPL_ID !== undefined;
-
 // MIME type to file extension mapping
 // FOUNDATION: See FOUNDATION.md Principle 1 for guidance on adding new media formats
 const mimeToExt: Record<string, string> = {
@@ -149,33 +146,8 @@ export async function registerRoutes(app: Express, services: AppServices): Promi
 
         imageUrls.push(imageUrl);
 
-        if (isReplit) {
-          // Use Replit object storage
-          const privateObjectDir = objectStorage.getPrivateObjectDir();
-          const fullPath = `${privateObjectDir}/${storagePath}`;
-
-          const pathParts = fullPath.split("/");
-          const bucketName = pathParts[1];
-          const objectName = pathParts.slice(2).join("/");
-
-          const bucket = await import("./objectStorage").then(m => m.objectStorageClient.bucket(bucketName));
-          const fileObj = bucket.file(objectName);
-
-          await fileObj.save(file.buffer, {
-            contentType: file.mimetype,
-            metadata: {
-              metadata: {
-                "custom:aclPolicy": JSON.stringify({
-                  owner: "system",
-                  visibility: "public"
-                })
-              }
-            }
-          });
-        } else {
-          // Use local filesystem storage
-          await objectStorage.saveLocalFile(storagePath, file.buffer);
-        }
+        // Save to local filesystem storage
+        await objectStorage.saveLocalFile(storagePath, file.buffer);
       }
     } catch (error) {
       console.error('Storage error:', error);
@@ -213,15 +185,9 @@ export async function registerRoutes(app: Express, services: AppServices): Promi
 
   // Serve objects (images)
   app.get("/objects/:objectPath(*)", wrap(async (req, res) => {
-    if (isReplit) {
-      // Serve from Replit object storage
-      const objectFile = await objectStorage.getObjectEntityFile(req.path);
-      objectStorage.downloadObject(objectFile, res);
-    } else {
-      // Serve from local filesystem
-      const localPath = await objectStorage.getLocalObjectFile(req.path);
-      objectStorage.downloadLocalObject(localPath, res);
-    }
+    // Serve from local filesystem
+    const localPath = await objectStorage.getLocalObjectFile(req.path);
+    objectStorage.downloadLocalObject(localPath, res);
   }));
 
   const httpServer = createServer(app);

@@ -66,17 +66,15 @@ app.use((req, res, next) => {
 
     // Load and validate application configuration (PRD 0005)
     const config = loadAppConfig();
-    log(`🔧 Storage backend: ${config.isReplit ? 'Google Cloud Storage (Replit)' : `Local filesystem (${config.storageConfig.localStorageDir})`}`);
+    log(`🔧 Storage backend: Local filesystem (${config.localStorageDir})`);
 
     // Ensure local storage directory exists
-    if (!config.isReplit) {
-      try {
-        await fs.mkdir(config.storageConfig.localStorageDir, { recursive: true });
-        await fs.access(config.storageConfig.localStorageDir);
-        log(`✓ Local storage directory ready: ${config.storageConfig.localStorageDir}`);
-      } catch (error) {
-        log(`⚠️  Warning: Unable to access local storage directory: ${error}`);
-      }
+    try {
+      await fs.mkdir(config.localStorageDir, { recursive: true });
+      await fs.access(config.localStorageDir);
+      log(`✓ Local storage directory ready: ${config.localStorageDir}`);
+    } catch (error) {
+      log(`⚠️  Warning: Unable to access local storage directory: ${error}`);
     }
 
     // Initialize service container (PRD 0005)
