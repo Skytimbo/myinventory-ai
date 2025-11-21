@@ -13,13 +13,38 @@ export interface IStorage {
 
 export class DatabaseStorage implements IStorage {
   private db: NeonHttpDatabase;
+  private client: ReturnType<typeof neon>;
 
-  constructor() {
-    if (!process.env.DATABASE_URL) {
+  private constructor(db: NeonHttpDatabase, client: ReturnType<typeof neon>) {
+    this.db = db;
+    this.client = client;
+  }
+
+  /**
+   * Create and initialize a DatabaseStorage instance with connection testing
+   *
+   * @throws {Error} If DATABASE_URL is missing or connection test fails
+   */
+  static async create(): Promise<DatabaseStorage> {
+    const connectionString = process.env.DATABASE_URL;
+    if (!connectionString) {
       throw new Error("DATABASE_URL environment variable is required");
     }
-    const sql = neon(process.env.DATABASE_URL);
-    this.db = drizzle(sql);
+
+    // Initialize Neon HTTP client with explicit fetch
+    const client = neon(connectionString, { fetch });
+    const db = drizzle(client);
+
+    // Test connection by running a simple query to resolve DNS early
+    try {
+      await client`SELECT 1`;
+      console.log('✓ Database connection verified');
+    } catch (error) {
+      console.error('❌ Database connection test failed:', error);
+      throw new Error(`Failed to connect to database: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    return new DatabaseStorage(db, client);
   }
 
   async getItems(): Promise<InventoryItem[]> {

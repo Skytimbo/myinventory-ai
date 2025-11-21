@@ -115,7 +115,7 @@ export async function createProdServices(_config: AppConfig): Promise<AppService
   // Instantiate production services
   // Note: Current implementations read env vars directly from process.env
   // This is acceptable for now; future refactor can pass config explicitly
-  const storage = new DatabaseStorage();
+  const storage = await DatabaseStorage.create();
   const objectStorage = new ObjectStorageService();
 
   return {
