@@ -7,6 +7,7 @@ import { randomUUID } from "crypto";
 import { wrap, ApiError } from "./errors";
 import { validateUploadedFile } from "./fileValidation";
 import { analyzeImagePolicy, type AnalysisResult } from "./modelPolicy";
+import { getOpenAIEnvHealth } from "./health/openaiHealth";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -26,13 +27,19 @@ export async function registerRoutes(app: Express, services: AppServices): Promi
   // Destructure services for convenient access in route handlers
   const { storage, objectStorage } = services;
 
-  // Health check endpoint for Replit deployment monitoring
+  // Health check endpoint for deployment monitoring
   app.get("/api/health", (req, res) => {
     res.json({
       status: "ok",
       timestamp: new Date().toISOString(),
       environment: process.env.NODE_ENV || "development"
     });
+  });
+
+  // OpenAI configuration health check
+  app.get("/api/health/openai", (req, res) => {
+    const health = getOpenAIEnvHealth();
+    res.json(health);
   });
 
   // Multer error handler for file size limits
