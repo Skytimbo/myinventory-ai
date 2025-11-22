@@ -109,10 +109,12 @@ export async function registerRoutes(app: Express, services: AppServices): Promi
     const primaryFile = files[0];
 
     let analysis: AnalysisResult;
+    let aiWarning: string | null = null;
     try {
       analysis = await analyzeImagePolicy(primaryFile.buffer);
     } catch (err) {
       console.error("AI analysis failed:", err);
+      aiWarning = "AI analysis unavailable. Using default values. Please update item details manually.";
       // Use fallback values - null for value fields, not "0.00"
       analysis = {
         name: "Item",
@@ -178,7 +180,7 @@ export async function registerRoutes(app: Express, services: AppServices): Promi
       valueRationale: analysis.valueRationale,
     });
 
-    res.json(item);
+    res.json({ ...item, _aiWarning: aiWarning });
   }));
 
   // Delete inventory item
