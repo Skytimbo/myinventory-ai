@@ -155,6 +155,7 @@ LIMIT 5;
 
 2. OPENAI_API_KEY is missing/invalid
    - **Fix:** Set in Railway dashboard → Variables
+   - If using project-scoped keys (`sk-proj-*`), also set `OPENAI_PROJECT_ID`
    - Verify with: `https://your-app.railway.app/api/health/openai`
 
 3. DATABASE_URL is incorrect

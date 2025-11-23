@@ -48,11 +48,14 @@
 
 ```bash
 OPENAI_API_KEY=sk-your-actual-openai-key-here
+OPENAI_PROJECT_ID=proj_xxxxxxxxxxxxx
 PORT=5000
 NODE_ENV=production
 LOCAL_STORAGE_DIR=/app/uploads
 USE_LOCAL_STORAGE=true
 ```
+
+**Note:** `OPENAI_PROJECT_ID` is required if using project-scoped API keys (starting with `sk-proj-`). Find your project ID at: https://platform.openai.com/settings/organization/projects
 
 3. Verify `DATABASE_URL` is already present (auto-injected from PostgreSQL plugin)
 4. Click **"Deploy"** to trigger redeploy with new variables
@@ -184,13 +187,18 @@ railway run ls -la /app/uploads
 ```bash
 # Check OpenAI API key
 railway run sh -c 'echo $OPENAI_API_KEY | cut -c1-10'
-# Should show: sk-proj-...
+# Should show: sk-proj-... or sk-...
+
+# Check OpenAI project ID (if using project-scoped key)
+railway run sh -c 'echo $OPENAI_PROJECT_ID'
+# Should show: proj_xxxxxxxxxxxxx (if using sk-proj-* key)
 ```
 
 **Common causes:**
 1. Invalid API key → Verify on https://platform.openai.com/api-keys
-2. OpenAI account has no credits → Add payment method
-3. API key not set in Railway → Add `OPENAI_API_KEY` variable
+2. Missing project ID → If using `sk-proj-*` keys, add `OPENAI_PROJECT_ID` variable
+3. OpenAI account has no credits → Add payment method
+4. API key not set in Railway → Add `OPENAI_API_KEY` variable
 
 **Check logs for specific error:**
 ```bash

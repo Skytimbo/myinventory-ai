@@ -30,6 +30,9 @@ export interface AppConfig {
   /** OpenAI API base URL (optional, defaults to OpenAI API) */
   openaiBaseUrl: string;
 
+  /** OpenAI Project ID (required for project-scoped keys starting with sk-proj-*) */
+  openaiProjectId: string | undefined;
+
   /** Node environment mode */
   nodeEnv: 'development' | 'production' | 'test';
 
@@ -62,6 +65,7 @@ export function loadAppConfig(): AppConfig {
   }
 
   const openaiBaseUrl = process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
+  const openaiProjectId = process.env.OPENAI_PROJECT_ID;
 
   // Server configuration
   const nodeEnv = (process.env.NODE_ENV || 'development') as 'development' | 'production' | 'test';
@@ -74,6 +78,7 @@ export function loadAppConfig(): AppConfig {
     databaseUrl,
     openaiApiKey,
     openaiBaseUrl,
+    openaiProjectId,
     nodeEnv,
     port,
     localStorageDir,
