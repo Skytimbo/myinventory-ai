@@ -31,15 +31,26 @@ export default function Home() {
 
   const createItemMutation = useMutation({
     mutationFn: async (data: FormData) => {
-      return await apiRequest("POST", "/api/items", data);
+      const response = await apiRequest("POST", "/api/items", data);
+      return await response.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/items"] });
       setShowCapture(false);
-      toast({
-        title: "Item Added",
-        description: "Your item has been successfully added to inventory.",
-      });
+
+      // Check if AI analysis failed
+      if (data._aiWarning) {
+        toast({
+          title: "Item Added (AI Unavailable)",
+          description: data._aiWarning,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Item Added",
+          description: "Your item has been successfully added to inventory.",
+        });
+      }
     },
     onError: () => {
       toast({

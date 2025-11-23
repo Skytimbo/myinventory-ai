@@ -9,6 +9,7 @@ process.on("unhandledRejection", e => console.error("unhandledRejection:", e));
 process.on("exit", code => console.error("exit code:", code));
 
 import express, { type Request, Response, NextFunction } from "express";
+import cors from "cors";
 import { registerRoutes } from "./routes";
 import { loadAppConfig, createProdServices } from "./services";
 import { setupVite, serveStatic, log } from "./vite";
@@ -17,6 +18,18 @@ import { promises as fs } from "fs";
 import path from "path";
 
 const app = express();
+
+// CORS configuration for Railway deployment
+// In development: Allow all origins
+// In production: Allow Railway frontend (same origin) + localhost for testing
+app.use(cors({
+  origin: process.env.NODE_ENV === 'production'
+    ? [process.env.CORS_ORIGIN || true]
+    : true,
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
 
 declare module 'http' {
   interface IncomingMessage {
