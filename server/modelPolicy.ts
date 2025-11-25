@@ -1,4 +1,14 @@
 import { openaiCheap, openaiPremium } from "./openai";
+import type OpenAI from "openai";
+
+export async function openAIHealthCheck(openaiClient: OpenAI) {
+  try {
+    await openaiClient.models.list();
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err.message };
+  }
+}
 
 export interface AnalysisResult {
   name: string;

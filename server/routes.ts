@@ -28,11 +28,18 @@ export async function registerRoutes(app: Express, services: AppServices): Promi
   const { storage, objectStorage } = services;
 
   // Health check endpoint for deployment monitoring
-  app.get("/api/health", (req, res) => {
+  app.get("/api/health", async (req, res) => {
+    const ai = await import("./modelPolicy").then(m =>
+      m.openAIHealthCheck(services.openaiCheap)
+    );
     res.json({
-      status: "ok",
-      timestamp: new Date().toISOString(),
-      environment: process.env.NODE_ENV || "development"
+      ok: true,
+      node: process.version,
+      env: {
+        projectIdLoaded: !!process.env.OPENAI_PROJECT_ID,
+        apiKeyLoaded: !!process.env.OPENAI_API_KEY,
+      },
+      ai,
     });
   });
 

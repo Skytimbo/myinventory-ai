@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useRef } from "react";
+import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { InventoryItem } from "@shared/schema";
 import { CameraCapture } from "@/components/CameraCapture";
@@ -24,6 +24,18 @@ export default function Home() {
   const [dateRange, setDateRange] = useState<[Date | null, Date | null]>([null, null]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
+
+  useEffect(() => {
+    fetch("/api/health")
+      .then(r => r.json())
+      .then(h => {
+        console.log("BACKEND HEALTH:", h);
+        if (!h.ok || !h.ai?.ok) {
+          alert("Backend or AI is not available. Check console.");
+        }
+      })
+      .catch(err => alert("Cannot reach backend at /api/health"));
+  }, []);
 
   const { data: items = [], isLoading } = useQuery<InventoryItem[]>({
     queryKey: ["/api/items"],

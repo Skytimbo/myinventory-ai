@@ -1,5 +1,18 @@
 import 'dotenv/config';
 
+// --- BEGIN DEBUG ---
+import { existsSync } from "fs";
+import { join } from "path";
+console.log("DEBUG: process.cwd() =", process.cwd());
+console.log("DEBUG: import.meta.dirname =", import.meta.dirname);
+console.log(
+  "DEBUG: .env exists in CWD?",
+  existsSync(join(process.cwd(), ".env"))
+);
+console.log("DEBUG: Loaded OPENAI_PROJECT_ID =", process.env.OPENAI_PROJECT_ID);
+console.log("DEBUG: Loaded OPENAI_API_KEY prefix =", process.env.OPENAI_API_KEY?.slice(0, 10));
+// --- END DEBUG ---
+
 // Diagnostic: Show API key prefix at startup (BEFORE any services are loaded)
 console.log("Loaded API key prefix:", process.env.OPENAI_API_KEY?.slice(0, 10) || "NOT SET");
 
@@ -158,6 +171,20 @@ app.use((req, res, next) => {
   server.on("error", (err) => console.error("listen error:", err));
   server.listen(port, "0.0.0.0", () => {
     console.log("D: inside listen callback");
+    console.log("DEBUG: server.listen callback fired for port =", port);
+
+    import("node:net").then(({ Socket }) => {
+      const s = new Socket();
+      s.once("error", err => {
+        console.log("DEBUG: test connection error (server NOT listening):", err);
+      });
+      s.once("connect", () => {
+        console.log("DEBUG: test connection SUCCESS (server IS listening)");
+        s.end();
+      });
+      s.connect(port, "127.0.0.1");
+    });
+
     log(`serving on port ${port}`);
   });
   } catch (err) {

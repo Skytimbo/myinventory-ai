@@ -20,20 +20,12 @@ export default defineConfig({
   },
   server: {
     host: true, // Enable LAN access
-    port: 5173,
-    fs: {
-      strict: true,
-      deny: ["**/.*"],
-    },
+    port: 5174,
     proxy: {
-      '/api': {
-        target: process.env.API_PORT ? `http://localhost:${process.env.API_PORT}` : 'http://localhost:5001',
+      "/api": {
+        target: "http://localhost:5001",
         changeOrigin: true,
-      },
-      '/objects': {
-        target: process.env.API_PORT ? `http://localhost:${process.env.API_PORT}` : 'http://localhost:5001',
-        changeOrigin: true,
-      },
+      }
     },
   },
   test: {

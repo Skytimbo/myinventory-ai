@@ -14,6 +14,7 @@
 import path from 'path';
 import { randomUUID } from 'crypto';
 import type { IStorage } from './storage';
+import { openaiCheap, openaiPremium } from "./openai";
 import type { ObjectStorageService } from './objectStorage';
 import type { InventoryItem, InsertInventoryItem } from '@shared/schema';
 
@@ -99,8 +100,11 @@ export interface AppServices {
   /** Object storage service (local filesystem) */
   objectStorage: ObjectStorageService;
 
-  // Note: Image analysis is handled directly via analyzeImagePolicy() in modelPolicy.ts
-  // The service container pattern is not used for AI analysis
+  /** OpenAI client for cheap/fast models (gpt-4o-mini) */
+  openaiCheap: import("openai").default;
+
+  /** OpenAI client for premium models (gpt-4o) */
+  openaiPremium: import("openai").default;
 }
 
 /**
@@ -126,6 +130,8 @@ export async function createProdServices(_config: AppConfig): Promise<AppService
   return {
     storage,
     objectStorage,
+    openaiCheap,
+    openaiPremium,
   };
 }
 
@@ -338,5 +344,7 @@ export async function createTestServices(_config: AppConfig): Promise<AppService
   return {
     storage,
     objectStorage,
+    openaiCheap: {} as any,
+    openaiPremium: {} as any,
   };
 }
