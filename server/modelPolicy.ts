@@ -61,6 +61,8 @@ For value estimation:
     ],
     response_format: { type: "json_object" },
     max_tokens: 1000,
+    temperature: 0,
+    seed: 42,
   });
 
   const content = response.choices[0]?.message?.content;
@@ -149,6 +151,8 @@ Be conservative - account for negotiation room and platform fees.`,
     ],
     response_format: { type: "json_object" },
     max_tokens: 1000,
+    temperature: 0,
+    seed: 42,
   });
 
   const content = response.choices[0]?.message?.content;
