@@ -196,6 +196,21 @@ export class FakeDatabaseStorage implements IStorage {
     return this.items.delete(id);
   }
 
+  async updateItem(id: string, updates: Partial<InsertInventoryItem>): Promise<InventoryItem | null> {
+    const existing = this.items.get(id);
+    if (!existing) {
+      return null;
+    }
+
+    const updated: InventoryItem = {
+      ...existing,
+      ...updates,
+    };
+
+    this.items.set(id, updated);
+    return updated;
+  }
+
   /**
    * Test helper: Clear all items from storage
    * Useful for resetting state between tests
@@ -307,6 +322,22 @@ export class FakeObjectStorageService {
     });
 
     res.send(buffer);
+  }
+
+  /**
+   * Read file from fake storage (Quick Capture analyze support)
+   */
+  async readFile(objectPath: string): Promise<Buffer> {
+    const filePath = await this.getLocalObjectFile(objectPath);
+    const relativePath = filePath.replace(`${this.storageDir}/`, '');
+
+    const buffer = this.files.get(relativePath);
+    if (!buffer) {
+      const { ObjectNotFoundError } = await import('./objectStorage');
+      throw new ObjectNotFoundError();
+    }
+
+    return buffer;
   }
 
   /**
