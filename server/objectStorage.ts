@@ -181,4 +181,16 @@ export class ObjectStorageService {
     // Write file
     await fs.writeFile(fullPath, buffer);
   }
+
+  /**
+   * Read file from local filesystem storage
+   *
+   * @param objectPath - Virtual object path (e.g., "/objects/items/uuid.jpg")
+   * @returns File content as Buffer
+   * @throws ObjectNotFoundError if file doesn't exist
+   */
+  async readFile(objectPath: string): Promise<Buffer> {
+    const filePath = await this.getLocalObjectFile(objectPath);
+    return fs.readFile(filePath);
+  }
 }

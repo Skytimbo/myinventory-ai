@@ -8,7 +8,8 @@ import { SearchFilter } from "@/components/SearchFilter";
 import { BarcodeModal } from "@/components/BarcodeModal";
 import { ExportModal } from "@/components/ExportModal";
 import { Button } from "@/components/ui/button";
-import { Upload, Download, Loader2, Camera, Package } from "lucide-react";
+import { Upload, Download, Loader2, Camera, Package, Zap } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { createItemUploadFormData, createItemMultiUploadFormData } from "@/lib/uploadService";
@@ -18,6 +19,10 @@ export default function Home() {
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [showExportModal, setShowExportModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [quickCapture, setQuickCapture] = useState(() => {
+    // Persist preference in localStorage
+    return localStorage.getItem("quickCapture") === "true";
+  });
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [selectedLocations, setSelectedLocations] = useState<string[]>([]);
   const [valueRange, setValueRange] = useState<[number, number]>([0, 10000]);
@@ -86,12 +91,44 @@ export default function Home() {
     },
   });
 
+  const analyzeMutation = useMutation({
+    mutationFn: async (itemId: string) => {
+      const response = await apiRequest("POST", `/api/items/${itemId}/analyze`);
+      return await response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/items"] });
+      toast({
+        title: "Analysis Complete",
+        description: "Item has been analyzed and updated with AI insights.",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Analysis Failed",
+        description: "Failed to analyze item. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Persist quickCapture preference
+  const handleQuickCaptureToggle = useCallback((checked: boolean) => {
+    setQuickCapture(checked);
+    localStorage.setItem("quickCapture", String(checked));
+  }, []);
+
   const handleImageCapture = async (imageDataUrl: string, location?: string) => {
     const blob = await fetch(imageDataUrl).then(res => res.blob());
     const formData = createItemUploadFormData(blob, "capture.jpg");
 
     if (location) {
       formData.append("location", location);
+    }
+
+    // Quick Capture mode: skip AI analysis for fast upload
+    if (quickCapture) {
+      formData.append("skipAI", "true");
     }
 
     createItemMutation.mutate(formData);
@@ -135,6 +172,11 @@ export default function Home() {
       // Multi-image upload (PRD 0004)
       const filenames = filesArray.map(f => f.name);
       formData = createItemMultiUploadFormData(filesArray, filenames);
+    }
+
+    // Quick Capture mode: skip AI analysis for fast upload
+    if (quickCapture) {
+      formData.append("skipAI", "true");
     }
 
     createItemMutation.mutate(formData);
@@ -245,6 +287,22 @@ export default function Home() {
         <div className="container mx-auto px-4 h-16 flex items-center justify-between">
           <h1 className="text-2xl font-semibold" data-testid="text-app-title">MyInventory AI</h1>
           <div className="flex items-center gap-3">
+            {/* Quick Capture Toggle */}
+            <div className="flex items-center gap-2 mr-2">
+              <Switch
+                id="quick-capture"
+                checked={quickCapture}
+                onCheckedChange={handleQuickCaptureToggle}
+                data-testid="switch-quick-capture"
+              />
+              <label
+                htmlFor="quick-capture"
+                className="text-sm font-medium cursor-pointer flex items-center gap-1"
+              >
+                <Zap className={`w-4 h-4 ${quickCapture ? "text-yellow-500" : "text-muted-foreground"}`} />
+                <span className="hidden sm:inline">Quick</span>
+              </label>
+            </div>
             <input
               ref={fileInputRef}
               type="file"
@@ -348,6 +406,8 @@ export default function Home() {
                 item={item}
                 onDelete={(id) => deleteItemMutation.mutate(id)}
                 onViewBarcode={setSelectedItem}
+                onAnalyze={(id) => analyzeMutation.mutate(id)}
+                isAnalyzing={analyzeMutation.isPending}
               />
             ))}
           </div>

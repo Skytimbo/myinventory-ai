@@ -115,17 +115,17 @@ export async function registerRoutes(app: Express, services: AppServices): Promi
     // Run AI analysis only on first image (primary) - PRD 0004
     const primaryFile = files[0];
 
+    // Check for Quick Capture mode (skip AI analysis)
+    const skipAI = req.body.skipAI === 'true' || req.body.skipAI === true;
+
     let analysis: AnalysisResult;
     let aiWarning: string | null = null;
-    try {
-      analysis = await analyzeImagePolicy(primaryFile.buffer);
-    } catch (err) {
-      console.error("AI analysis failed:", err);
-      aiWarning = "AI analysis unavailable. Using default values. Please update item details manually.";
-      // Use fallback values - null for value fields, not "0.00"
+
+    if (skipAI) {
+      // Quick Capture mode - skip AI for fast upload
       analysis = {
-        name: "Item",
-        description: "AI analysis temporarily unavailable. Please add details manually.",
+        name: "Untitled Item",
+        description: "",
         category: "Uncategorized",
         tags: [],
         confidence: 0,
@@ -134,6 +134,27 @@ export async function registerRoutes(app: Express, services: AppServices): Promi
         valueRationale: null,
         raw: null,
       };
+      aiWarning = "Quick capture - not yet analyzed";
+    } else {
+      // Normal flow with AI analysis
+      try {
+        analysis = await analyzeImagePolicy(primaryFile.buffer);
+      } catch (err) {
+        console.error("AI analysis failed:", err);
+        aiWarning = "AI analysis unavailable. Using default values. Please update item details manually.";
+        // Use fallback values - null for value fields, not "0.00"
+        analysis = {
+          name: "Item",
+          description: "AI analysis temporarily unavailable. Please add details manually.",
+          category: "Uncategorized",
+          tags: [],
+          confidence: 0,
+          estimatedValue: null,
+          valueConfidence: null,
+          valueRationale: null,
+          raw: null,
+        };
+      }
     }
 
     // Generate storage paths and URLs for all images
@@ -197,6 +218,37 @@ export async function registerRoutes(app: Express, services: AppServices): Promi
       throw new ApiError(404, 'NOT_FOUND', 'Item not found');
     }
     res.json({ success: true });
+  }));
+
+  // Analyze an existing item (for Quick Capture mode)
+  app.post("/api/items/:id/analyze", wrap(async (req, res) => {
+    const item = await storage.getItem(req.params.id);
+    if (!item) {
+      throw new ApiError(404, 'NOT_FOUND', 'Item not found');
+    }
+
+    // Read image from storage
+    const imageBuffer = await objectStorage.readFile(item.imageUrl);
+
+    // Run AI analysis
+    const analysis = await analyzeImagePolicy(imageBuffer);
+
+    // Update item with AI results
+    const updated = await storage.updateItem(req.params.id, {
+      name: analysis.name,
+      description: analysis.description,
+      category: analysis.category,
+      tags: analysis.tags,
+      estimatedValue: analysis.estimatedValue,
+      valueConfidence: analysis.valueConfidence,
+      valueRationale: analysis.valueRationale,
+    });
+
+    if (!updated) {
+      throw new ApiError(500, 'UPDATE_FAILED', 'Failed to update item');
+    }
+
+    res.json(updated);
   }));
 
   // Serve objects (images)
