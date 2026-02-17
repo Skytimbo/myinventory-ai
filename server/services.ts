@@ -259,7 +259,7 @@ export class FakeDatabaseStorage implements IStorage {
 
   async updateItem(
     id: string,
-    updates: Partial<InsertInventoryItem>
+    updates: Partial<InsertInventoryItem>,
   ): Promise<InventoryItem | null> {
     const existing = this.items.get(id);
     if (!existing) {
