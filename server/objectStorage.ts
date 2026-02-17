@@ -1,3 +1,14 @@
+/**
+ * IObjectStorage Interface & Implementation (Architecture Refactoring)
+ *
+ * This module provides:
+ * - IObjectStorage interface for pluggable object storage
+ * - ObjectStorageService: Local filesystem implementation
+ *
+ * Storage-agnostic naming allows future implementations (S3, GCS, etc.)
+ * without changing consuming code.
+ */
+
 import { Response } from "express";
 import { promises as fs } from "fs";
 import path from "path";
@@ -11,7 +22,22 @@ export class ObjectNotFoundError extends Error {
 }
 
 /**
- * ObjectStorageService
+ * Strategy interface for object storage
+ * Implementations can use different backends (local filesystem, S3, GCS, etc.)
+ */
+export interface IObjectStorage {
+  /** Save a buffer to the given path */
+  save(path: string, buffer: Buffer): Promise<void>;
+
+  /** Read a file as a buffer */
+  read(objectPath: string): Promise<Buffer>;
+
+  /** Stream a file to an HTTP response */
+  download(objectPath: string, res: Response): Promise<void>;
+}
+
+/**
+ * ObjectStorageService - Local Filesystem Implementation
  *
  * Local filesystem storage for uploaded images.
  * Supports both development (./uploads) and Railway (/app/uploads with persistent volume).
@@ -19,7 +45,7 @@ export class ObjectNotFoundError extends Error {
  * FOUNDATION: This service is designed for multi-file scenarios. Methods accept
  * arbitrary file paths, enabling future multi-image uploads (PRD 0004+).
  */
-export class ObjectStorageService {
+export class ObjectStorageService implements IObjectStorage {
   constructor() {}
 
   /**
@@ -73,7 +99,7 @@ export class ObjectStorageService {
     }
 
     // Ensure no path components are suspicious
-    const parts = objectPath.split("/").filter(p => p);
+    const parts = objectPath.split("/").filter((p) => p);
     for (const part of parts) {
       if (part === "." || part === "..") {
         return false;
@@ -84,54 +110,58 @@ export class ObjectStorageService {
   }
 
   /**
-   * Download a local file and stream it to the response
+   * Save file to local filesystem storage
    *
-   * @param filePath - Absolute filesystem path to the file
-   * @param res - Express Response object
-   * @param cacheTtlSec - Cache TTL in seconds (default: 3600)
+   * NOTE: This method supports arbitrary file paths, enabling future multi-image
+   * scenarios. Path structure: uploads/{relativePath} where relativePath can be
+   * items/{uuid}.jpg or items/{uuid}/0.jpg for multi-image support.
+   *
+   * @param relativePath - Path relative to uploads directory (e.g., "items/uuid.jpg")
+   * @param buffer - File content as Buffer
    */
-  async downloadLocalObject(filePath: string, res: Response, cacheTtlSec: number = 3600) {
-    try {
-      const stats = await fs.stat(filePath);
-      const ext = path.extname(filePath).toLowerCase();
-      const contentType =
-        ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' :
-        ext === '.png' ? 'image/png' :
-        ext === '.gif' ? 'image/gif' :
-        ext === '.webp' ? 'image/webp' :
-        'application/octet-stream';
+  async save(relativePath: string, buffer: Buffer): Promise<void> {
+    const fullPath = path.join(this.getLocalStorageDir(), relativePath);
+    const dir = path.dirname(fullPath);
 
-      res.set({
-        "Content-Type": contentType,
-        "Content-Length": stats.size.toString(),
-        "Cache-Control": `public, max-age=${cacheTtlSec}`,
-      });
+    // Ensure directory exists
+    await fs.mkdir(dir, { recursive: true });
 
-      const readStream = (await import('fs')).createReadStream(filePath);
-
-      readStream.on("error", (err) => {
-        console.error("Stream error:", err);
-        if (!res.headersSent) {
-          res.status(500).json({ error: "Error streaming file" });
-        }
-      });
-
-      readStream.pipe(res);
-    } catch (error) {
-      console.error("Error downloading local file:", error);
-      if (!res.headersSent) {
-        res.status(404).json({ error: "File not found" });
-      }
-    }
+    // Write file
+    await fs.writeFile(fullPath, buffer);
   }
 
   /**
-   * Get local filesystem path for an object
+   * Read file from local filesystem storage
+   *
+   * @param objectPath - Virtual object path (e.g., "/objects/items/uuid.jpg")
+   * @returns File content as Buffer
+   * @throws ObjectNotFoundError if file doesn't exist
+   */
+  async read(objectPath: string): Promise<Buffer> {
+    const filePath = await this.resolveObjectPath(objectPath);
+    return fs.readFile(filePath);
+  }
+
+  /**
+   * Stream a file to an HTTP response
+   *
+   * @param objectPath - Virtual object path (e.g., "/objects/items/uuid.jpg")
+   * @param res - Express Response object
+   */
+  async download(objectPath: string, res: Response): Promise<void> {
+    const filePath = await this.resolveObjectPath(objectPath);
+    await this.streamFile(filePath, res);
+  }
+
+  /**
+   * Resolve virtual object path to local filesystem path
+   * Internal helper used by read() and download()
    *
    * @param objectPath - Virtual object path (e.g., "/objects/items/uuid.jpg")
    * @returns Absolute filesystem path
+   * @throws ObjectNotFoundError if path is invalid or file doesn't exist
    */
-  async getLocalObjectFile(objectPath: string): Promise<string> {
+  private async resolveObjectPath(objectPath: string): Promise<string> {
     // Validate path to prevent traversal attacks
     if (!this.validateObjectPath(objectPath)) {
       throw new ObjectNotFoundError();
@@ -162,35 +192,78 @@ export class ObjectStorageService {
   }
 
   /**
-   * Save file to local filesystem storage
-   *
-   * NOTE: This method supports arbitrary file paths, enabling future multi-image
-   * scenarios. Path structure: uploads/{relativePath} where relativePath can be
-   * items/{uuid}.jpg or items/{uuid}/0.jpg for multi-image support.
-   *
-   * @param relativePath - Path relative to uploads directory (e.g., "items/uuid.jpg")
-   * @param buffer - File content as Buffer
+   * Stream a file to the response with proper headers
+   * Internal helper used by download()
    */
-  async saveLocalFile(relativePath: string, buffer: Buffer): Promise<void> {
-    const fullPath = path.join(this.getLocalStorageDir(), relativePath);
-    const dir = path.dirname(fullPath);
+  private async streamFile(
+    filePath: string,
+    res: Response,
+    cacheTtlSec: number = 3600
+  ): Promise<void> {
+    try {
+      const stats = await fs.stat(filePath);
+      const ext = path.extname(filePath).toLowerCase();
+      const contentType =
+        ext === ".jpg" || ext === ".jpeg"
+          ? "image/jpeg"
+          : ext === ".png"
+            ? "image/png"
+            : ext === ".gif"
+              ? "image/gif"
+              : ext === ".webp"
+                ? "image/webp"
+                : "application/octet-stream";
 
-    // Ensure directory exists
-    await fs.mkdir(dir, { recursive: true });
+      res.set({
+        "Content-Type": contentType,
+        "Content-Length": stats.size.toString(),
+        "Cache-Control": `public, max-age=${cacheTtlSec}`,
+      });
 
-    // Write file
-    await fs.writeFile(fullPath, buffer);
+      const readStream = (await import("fs")).createReadStream(filePath);
+
+      readStream.on("error", (err) => {
+        console.error("Stream error:", err);
+        if (!res.headersSent) {
+          res.status(500).json({ error: "Error streaming file" });
+        }
+      });
+
+      readStream.pipe(res);
+    } catch (error) {
+      console.error("Error downloading local file:", error);
+      if (!res.headersSent) {
+        res.status(404).json({ error: "File not found" });
+      }
+    }
   }
 
-  /**
-   * Read file from local filesystem storage
-   *
-   * @param objectPath - Virtual object path (e.g., "/objects/items/uuid.jpg")
-   * @returns File content as Buffer
-   * @throws ObjectNotFoundError if file doesn't exist
-   */
+  // ============================================================
+  // LEGACY METHODS - Deprecated, kept for backwards compatibility
+  // These will be removed in a future version
+  // ============================================================
+
+  /** @deprecated Use save() instead */
+  async saveLocalFile(relativePath: string, buffer: Buffer): Promise<void> {
+    return this.save(relativePath, buffer);
+  }
+
+  /** @deprecated Use read() instead */
   async readFile(objectPath: string): Promise<Buffer> {
-    const filePath = await this.getLocalObjectFile(objectPath);
-    return fs.readFile(filePath);
+    return this.read(objectPath);
+  }
+
+  /** @deprecated Use resolveObjectPath() internally or download() for streaming */
+  async getLocalObjectFile(objectPath: string): Promise<string> {
+    return this.resolveObjectPath(objectPath);
+  }
+
+  /** @deprecated Use download() instead */
+  async downloadLocalObject(
+    filePath: string,
+    res: Response,
+    cacheTtlSec: number = 3600
+  ): Promise<void> {
+    return this.streamFile(filePath, res, cacheTtlSec);
   }
 }

@@ -1,5 +1,5 @@
 /**
- * Service Container & Dependency Injection (PRD 0005)
+ * Service Container & Dependency Injection (Architecture Refactoring)
  *
  * This module implements the AppServices container pattern for backend services.
  * It provides:
@@ -8,15 +8,18 @@
  * - Test service factory (createTestServices)
  * - Dependency injection for all route handlers
  *
- * See FOUNDATION.md Principle 8 for architecture details.
+ * All services are constructor-injected to enable testing.
  */
 
-import path from 'path';
-import { randomUUID } from 'crypto';
-import type { IStorage } from './storage';
+import path from "path";
+import { randomUUID } from "crypto";
+import type { Response } from "express";
+import type { IStorage } from "./storage";
+import type { IObjectStorage } from "./objectStorage";
+import type { IAnalyzer, AnalysisResult } from "./analyzer";
+import type { IItemService } from "./itemService";
 import { openaiCheap, openaiPremium } from "./openai";
-import type { ObjectStorageService } from './objectStorage';
-import type { InventoryItem, InsertInventoryItem } from '@shared/schema';
+import type { InventoryItem, InsertInventoryItem } from "@shared/schema";
 
 /**
  * Application configuration loaded from environment variables
@@ -35,13 +38,16 @@ export interface AppConfig {
   openaiProjectId: string | undefined;
 
   /** Node environment mode */
-  nodeEnv: 'development' | 'production' | 'test';
+  nodeEnv: "development" | "production" | "test";
 
   /** Server port */
   port: number;
 
   /** Local storage directory for uploaded files */
   localStorageDir: string;
+
+  /** Analyzer provider: 'openai' | 'mock' */
+  analyzerProvider: "openai" | "mock";
 }
 
 /**
@@ -55,8 +61,8 @@ export function loadAppConfig(): AppConfig {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
     throw new Error(
-      'DATABASE_URL environment variable is required. ' +
-      'Please set it to your PostgreSQL connection string.'
+      "DATABASE_URL environment variable is required. " +
+        "Please set it to your PostgreSQL connection string."
     );
   }
 
@@ -65,15 +71,29 @@ export function loadAppConfig(): AppConfig {
     throw new Error("Missing OPENAI_API_KEY");
   }
 
-  const openaiBaseUrl = process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
+  const openaiBaseUrl =
+    process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
   const openaiProjectId = process.env.OPENAI_PROJECT_ID;
 
   // Server configuration
-  const nodeEnv = (process.env.NODE_ENV || 'development') as 'development' | 'production' | 'test';
-  const port = parseInt(process.env.PORT || '5000', 10);
+  const nodeEnv = (process.env.NODE_ENV || "development") as
+    | "development"
+    | "production"
+    | "test";
+  const port = parseInt(process.env.PORT || "5000", 10);
 
   // Local storage directory (development: ./uploads, Railway: /app/uploads)
-  const localStorageDir = process.env.LOCAL_STORAGE_DIR || path.join(process.cwd(), 'uploads');
+  const localStorageDir =
+    process.env.LOCAL_STORAGE_DIR || path.join(process.cwd(), "uploads");
+
+  // Analyzer selection (default: openai)
+  const analyzerProviderRaw = process.env.ANALYZER_PROVIDER || "openai";
+  if (!["openai", "mock"].includes(analyzerProviderRaw)) {
+    throw new Error(
+      `Invalid ANALYZER_PROVIDER: ${analyzerProviderRaw}. Use 'openai' or 'mock'.`
+    );
+  }
+  const analyzerProvider = analyzerProviderRaw as "openai" | "mock";
 
   return {
     databaseUrl,
@@ -83,6 +103,7 @@ export function loadAppConfig(): AppConfig {
     nodeEnv,
     port,
     localStorageDir,
+    analyzerProvider,
   };
 }
 
@@ -97,8 +118,14 @@ export interface AppServices {
   /** Database access layer for inventory items */
   storage: IStorage;
 
-  /** Object storage service (local filesystem) */
-  objectStorage: ObjectStorageService;
+  /** Object storage service (local filesystem or cloud) */
+  objectStorage: IObjectStorage;
+
+  /** AI image analyzer */
+  analyzer: IAnalyzer;
+
+  /** Item business logic service */
+  itemService: IItemService;
 
   /** OpenAI client for cheap/fast models (gpt-4o-mini) */
   openaiCheap: import("openai").default;
@@ -108,32 +135,66 @@ export interface AppServices {
 }
 
 /**
+ * Factory function to create the appropriate analyzer based on config
+ *
+ * @param config - Application configuration with analyzerProvider
+ * @param openaiCheap - OpenAI client for cheap models
+ * @param openaiPremium - OpenAI client for premium models
+ * @returns IAnalyzer implementation based on config.analyzerProvider
+ */
+async function createAnalyzer(
+  config: AppConfig,
+  openaiCheap: import("openai").default,
+  openaiPremium: import("openai").default
+): Promise<IAnalyzer> {
+  const { OpenAIAnalyzer, MockAnalyzer } = await import("./analyzer");
+
+  switch (config.analyzerProvider) {
+    case "mock":
+      console.log("Using MockAnalyzer (ANALYZER_PROVIDER=mock)");
+      return new MockAnalyzer();
+    case "openai":
+    default:
+      return new OpenAIAnalyzer(openaiCheap, openaiPremium);
+  }
+}
+
+/**
  * Create production services with real implementations
  *
  * This factory instantiates all backend services for production use.
  * Services will use real database connections, file storage, and AI APIs.
  *
- * @param _config - Validated application configuration (reserved for future use)
+ * @param config - Validated application configuration
  * @returns {AppServices} Container with production service instances
  */
-export async function createProdServices(_config: AppConfig): Promise<AppServices> {
+export async function createProdServices(
+  config: AppConfig
+): Promise<AppServices> {
   // Dynamically import services to avoid circular dependencies
-  const { DatabaseStorage } = await import('./storage');
-  const { ObjectStorageService } = await import('./objectStorage');
+  const { DatabaseStorage } = await import("./storage");
+  const { ObjectStorageService } = await import("./objectStorage");
+  const { ItemService } = await import("./itemService");
 
-  // Instantiate production services
-  // Note: Current implementations read env vars directly from process.env
-  // This is acceptable for now; future refactor can pass config explicitly
+  // Instantiate services in dependency order
   const storage = await DatabaseStorage.create();
   const objectStorage = new ObjectStorageService();
+  const analyzer = await createAnalyzer(config, openaiCheap, openaiPremium);
+  const itemService = new ItemService(storage, objectStorage, analyzer);
 
   return {
     storage,
     objectStorage,
+    analyzer,
+    itemService,
     openaiCheap,
     openaiPremium,
   };
 }
+
+// ============================================================
+// Test Fakes
+// ============================================================
 
 /**
  * Fake in-memory storage implementation for testing
@@ -155,7 +216,7 @@ export class FakeDatabaseStorage implements IStorage {
     });
 
     // Lazy migration: populate imageUrls from imageUrl if null (PRD 0004 - backwards compatibility)
-    return allItems.map(item => {
+    return allItems.map((item) => {
       if (!item.imageUrls) {
         item.imageUrls = [item.imageUrl];
       }
@@ -196,7 +257,10 @@ export class FakeDatabaseStorage implements IStorage {
     return this.items.delete(id);
   }
 
-  async updateItem(id: string, updates: Partial<InsertInventoryItem>): Promise<InventoryItem | null> {
+  async updateItem(
+    id: string,
+    updates: Partial<InsertInventoryItem>
+  ): Promise<InventoryItem | null> {
     const existing = this.items.get(id);
     if (!existing) {
       return null;
@@ -233,18 +297,14 @@ export class FakeDatabaseStorage implements IStorage {
 /**
  * Fake in-memory object storage implementation for testing
  *
- * This class provides a minimal fake of ObjectStorageService for deterministic testing.
+ * Implements IObjectStorage interface for deterministic testing.
  * Files are stored in memory and lost when the process exits.
  */
-export class FakeObjectStorageService {
+export class FakeObjectStorageService implements IObjectStorage {
   private files: Map<string, Buffer> = new Map();
-  private storageDir: string = '/tmp/fake-uploads';
+  private storageDir: string = "/tmp/fake-uploads";
 
   getLocalStorageDir(): string {
-    return this.storageDir;
-  }
-
-  getPrivateObjectDir(): string {
     return this.storageDir;
   }
 
@@ -268,76 +328,103 @@ export class FakeObjectStorageService {
     return pathRegex.test(objectPath);
   }
 
-  async saveLocalFile(relativePath: string, buffer: Buffer): Promise<void> {
+  async save(relativePath: string, buffer: Buffer): Promise<void> {
     this.files.set(relativePath, buffer);
   }
 
-  async getLocalObjectFile(objectPath: string): Promise<string> {
-    // Validate path to prevent traversal attacks
+  async read(objectPath: string): Promise<Buffer> {
+    // Validate path
     if (!this.validateObjectPath(objectPath)) {
-      const { ObjectNotFoundError } = await import('./objectStorage');
+      const { ObjectNotFoundError } = await import("./objectStorage");
       throw new ObjectNotFoundError();
     }
 
     const parts = objectPath.slice(1).split("/");
     if (parts.length < 2) {
-      const { ObjectNotFoundError } = await import('./objectStorage');
+      const { ObjectNotFoundError } = await import("./objectStorage");
+      throw new ObjectNotFoundError();
+    }
+
+    const entityId = parts.slice(1).join("/");
+
+    const buffer = this.files.get(entityId);
+    if (!buffer) {
+      const { ObjectNotFoundError } = await import("./objectStorage");
+      throw new ObjectNotFoundError();
+    }
+
+    return buffer;
+  }
+
+  async download(objectPath: string, res: Response): Promise<void> {
+    try {
+      const buffer = await this.read(objectPath);
+
+      // Determine content type from file extension
+      const ext = objectPath.split(".").pop()?.toLowerCase();
+      const contentType =
+        ext === "jpg" || ext === "jpeg"
+          ? "image/jpeg"
+          : ext === "png"
+            ? "image/png"
+            : ext === "gif"
+              ? "image/gif"
+              : ext === "webp"
+                ? "image/webp"
+                : "application/octet-stream";
+
+      res.set({
+        "Content-Type": contentType,
+        "Content-Length": buffer.length.toString(),
+        "Cache-Control": "public, max-age=3600",
+      });
+
+      res.send(buffer);
+    } catch (error) {
+      res.status(404).json({ error: "File not found" });
+    }
+  }
+
+  // Legacy method aliases for backwards compatibility
+  async saveLocalFile(relativePath: string, buffer: Buffer): Promise<void> {
+    return this.save(relativePath, buffer);
+  }
+
+  async readFile(objectPath: string): Promise<Buffer> {
+    return this.read(objectPath);
+  }
+
+  async getLocalObjectFile(objectPath: string): Promise<string> {
+    // Validate and return fake path
+    if (!this.validateObjectPath(objectPath)) {
+      const { ObjectNotFoundError } = await import("./objectStorage");
+      throw new ObjectNotFoundError();
+    }
+
+    const parts = objectPath.slice(1).split("/");
+    if (parts.length < 2) {
+      const { ObjectNotFoundError } = await import("./objectStorage");
       throw new ObjectNotFoundError();
     }
 
     const entityId = parts.slice(1).join("/");
 
     if (!this.files.has(entityId)) {
-      const { ObjectNotFoundError } = await import('./objectStorage');
+      const { ObjectNotFoundError } = await import("./objectStorage");
       throw new ObjectNotFoundError();
     }
 
-    // Return a fake path - the actual buffer is in memory
     return `${this.storageDir}/${entityId}`;
   }
 
-  async downloadLocalObject(filePath: string, res: any, cacheTtlSec: number = 3600): Promise<void> {
-    // Extract relative path from fake path
-    const relativePath = filePath.replace(`${this.storageDir}/`, '');
-
-    const buffer = this.files.get(relativePath);
-    if (!buffer) {
-      res.status(404).json({ error: "File not found" });
-      return;
-    }
-
-    // Determine content type from file extension
-    const ext = filePath.split('.').pop()?.toLowerCase();
-    const contentType =
-      ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' :
-      ext === 'png' ? 'image/png' :
-      ext === 'gif' ? 'image/gif' :
-      ext === 'webp' ? 'image/webp' :
-      'application/octet-stream';
-
-    res.set({
-      "Content-Type": contentType,
-      "Content-Length": buffer.length.toString(),
-      "Cache-Control": `public, max-age=${cacheTtlSec}`,
-    });
-
-    res.send(buffer);
-  }
-
-  /**
-   * Read file from fake storage (Quick Capture analyze support)
-   */
-  async readFile(objectPath: string): Promise<Buffer> {
-    const filePath = await this.getLocalObjectFile(objectPath);
-    const relativePath = filePath.replace(`${this.storageDir}/`, '');
-
-    const buffer = this.files.get(relativePath);
-    if (!buffer) {
-      const { ObjectNotFoundError } = await import('./objectStorage');
-      throw new ObjectNotFoundError();
-    }
-
-    return buffer;
+  async downloadLocalObject(
+    filePath: string,
+    res: Response,
+    _cacheTtlSec: number = 3600
+  ): Promise<void> {
+    const relativePath = filePath.replace(`${this.storageDir}/`, "");
+    const objectPath = `/objects/${relativePath}`;
+    return this.download(objectPath, res);
   }
 
   /**
@@ -356,25 +443,53 @@ export class FakeObjectStorageService {
 }
 
 /**
+ * Fake analyzer for testing - returns deterministic results
+ */
+export class FakeAnalyzer implements IAnalyzer {
+  readonly capabilities = {
+    supportsMultiItem: false,
+  };
+
+  async analyze(_imageBuffer: Buffer): Promise<AnalysisResult> {
+    return {
+      name: "Test Item",
+      description: "Test description",
+      category: "Test",
+      tags: ["test"],
+      confidence: 1.0,
+      estimatedValue: "10.00",
+      valueConfidence: "high",
+      valueRationale: "Test valuation",
+      raw: null,
+    };
+  }
+}
+
+/**
  * Create test services with fake implementations
  *
  * This factory instantiates all backend services using in-memory fakes.
  * Services are fast, deterministic, and require no external dependencies.
  * Ideal for unit tests, integration tests, and E2E tests.
  *
- * Note: Image analysis is tested by mocking OpenAI clients directly in test files,
- * not through this service container.
- *
  * @param _config - Validated application configuration (reserved for future use)
  * @returns {AppServices} Container with fake service instances
  */
-export async function createTestServices(_config: AppConfig): Promise<AppServices> {
+export async function createTestServices(
+  _config: AppConfig
+): Promise<AppServices> {
+  const { ItemService } = await import("./itemService");
+
   const storage = new FakeDatabaseStorage();
   const objectStorage = new FakeObjectStorageService();
+  const analyzer = new FakeAnalyzer();
+  const itemService = new ItemService(storage, objectStorage, analyzer);
 
   return {
     storage,
     objectStorage,
+    analyzer,
+    itemService,
     openaiCheap: {} as any,
     openaiPremium: {} as any,
   };
