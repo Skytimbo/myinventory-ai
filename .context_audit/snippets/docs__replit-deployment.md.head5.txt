@@ -1,0 +1,5 @@
+# Replit Deployment Guide
+
+Deploy MyInventory-AI to Replit for always-on mobile access without managing infrastructure.
+
+## Prerequisites

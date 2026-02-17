@@ -1,0 +1,5 @@
+# Railway Deployment Quick Start Guide
+
+**Status:** Ready to deploy
+**Estimated Time:** 15-30 minutes
+**Prerequisites:** GitHub account, Railway account, OpenAI API key

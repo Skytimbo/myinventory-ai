@@ -1,0 +1,5 @@
+# PRD-0007: OpenAI Dead Code Cleanup & Refactor
+
+## Document Header
+
+| Field | Value |

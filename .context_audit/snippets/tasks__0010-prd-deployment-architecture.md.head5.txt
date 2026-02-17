@@ -1,0 +1,5 @@
+# PRD-0010: Deployment Architecture & Hosting Strategy
+
+**Status:** Draft
+**Created:** 2025-11-20
+**Author:** Claude Code (AI Agent)
