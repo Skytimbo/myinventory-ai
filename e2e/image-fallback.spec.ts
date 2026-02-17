@@ -10,7 +10,6 @@ const ONE_BY_ONE_PNG = Buffer.from(
 );
 
 // Helper: URL pattern matchers
-const isItems = (url: URL) => /\/api\/items($|\?)/.test(url.pathname);
 const isBroken = (url: URL) => /\/broken\.jpg/.test(url.pathname);
 
 // Helper: Wait for cards to render
@@ -148,7 +147,6 @@ test.describe('Image Loading Fallback', () => {
   test('should show loading skeleton while image loads', async ({ page }) => {
     // Update route to delay image loading to test skeleton state
     await page.unroute(/\/broken\.jpg/);
-    let skeletonCheckDone = false;
 
     await page.route(/\/broken\.jpg(\?.*)?$/, async route => {
       // Delay by 1500ms to ensure skeleton has time to render and be checked

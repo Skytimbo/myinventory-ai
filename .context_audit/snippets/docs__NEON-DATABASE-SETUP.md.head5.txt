@@ -1,0 +1,5 @@
+# Neon Database Setup for Railway Deployment
+
+**Status:** Required for production deployment
+**Issue:** Railway shows "relation 'inventory_items' does not exist"
+**Solution:** Execute SQL migration in Neon Console

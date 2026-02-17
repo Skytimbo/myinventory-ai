@@ -32,15 +32,3 @@ export const openaiPremium = new OpenAI({
   project: projectId,
 });
 
-export interface ImageAnalysisResult {
-  name: string;
-  description: string;
-  category: string;
-  tags: string[];
-  estimatedValue: string;
-  valueConfidence?: string;
-  valueRationale?: string;
-}
-
-// Note: Image analysis is handled by analyzeImagePolicy() in modelPolicy.ts
-// which uses a cost-efficient tiered approach (cheap model with premium fallback)

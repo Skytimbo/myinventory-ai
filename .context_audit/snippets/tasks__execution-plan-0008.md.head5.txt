@@ -1,0 +1,5 @@
+# Execution Plan: PRD-0008 - Cloudflare Tunnel Access
+
+## Task 1.0: Implement cloudflared detection and tunnel startup
+
+### Task 1.1: Add cloudflared detection function

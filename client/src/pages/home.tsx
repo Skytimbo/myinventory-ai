@@ -39,7 +39,7 @@ export default function Home() {
           alert("Backend or AI is not available. Check console.");
         }
       })
-      .catch(err => alert("Cannot reach backend at /api/health"));
+      .catch(() => alert("Cannot reach backend at /api/health"));
   }, []);
 
   const { data: items = [], isLoading } = useQuery<InventoryItem[]>({

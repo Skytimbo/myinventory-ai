@@ -1,0 +1,5 @@
+# Tasks for PRD-0006: Automatic Estimated Value Generation
+
+**PRD:** `/tasks/0006-prd-automatic-value-estimation.md`
+**Created:** 2024-11-18
+**Status:** Pending

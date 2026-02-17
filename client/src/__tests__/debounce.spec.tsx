@@ -258,7 +258,7 @@ describe('Search Debouncing', () => {
     );
 
     const firstRenderInput = screen.getByTestId('input-search');
-    const firstOnChange = firstRenderInput.onchange;
+    const _firstOnChange = firstRenderInput.onchange;
 
     // Rerender with different props (but same onSearchChange)
     rerender(

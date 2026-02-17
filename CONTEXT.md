@@ -7,7 +7,7 @@ format_spec: v1-phase1-yaml-front-matter-sections-0-15
 source_commit: "683dd31d18875a9cf9620678bd89f315c4ac7002"
 machine_readable_index: ".context_audit/doc_inventory.csv"
 verification:
-  sha256_of_this_file: "dd902741add7f289330c4e9b31674f470722095fd7145d992cddf18d041fa0f3"
+  sha256_of_this_file: "62758a50bb4c051b53dcc5abab969ce7c1a30f397c786f9bc92e693d28b7601e"
 sources:
   - path: FOUNDATION.md
     role: foundational-architecture
@@ -46,21 +46,21 @@ This file provides a comprehensive snapshot of the myinventory-ai codebase, its 
 ## Section 0: Quick Reference
 
 **What is this project?**
-MyInventory AI is an intelligent inventory management system that leverages AI-powered image recognition to catalog and manage household items. Users can capture photos, automatically extract metadata via GPT-5 vision analysis, generate tracking barcodes, and estimate resale values with confidence indicators.
+MyInventory AI is an intelligent inventory management system that leverages AI-powered image recognition to catalog and manage household items. Users can capture photos, automatically extract metadata via OpenAI GPT-4o-mini / GPT-4o vision analysis, generate tracking barcodes, and estimate resale values with confidence indicators.
 
 **Tech Stack:**
 - **Frontend:** React 18+ (TypeScript), Vite, Wouter, TanStack Query, shadcn/ui, Tailwind CSS
 - **Backend:** Express (Node.js), TypeScript, Drizzle ORM
 - **Database:** Neon PostgreSQL (serverless)
-- **AI/ML:** OpenAI API (GPT-5 Vision)
-- **Storage:** Object storage for images
+- **AI/ML:** OpenAI API (GPT-4o-mini cheap + GPT-4o premium fallback)
+- **Storage:** Local filesystem (Railway persistent volume in production)
 - **Testing:** Vitest, Playwright (E2E)
+- **Linting:** ESLint 9 + Prettier
 - **Package Manager:** pnpm 10.20.0+
 
-**Current Phase:** Early development - technical debt resolution and CI/CD establishment
+**Current Phase:** Feature development — Quick Capture mode and architecture refactoring
 
 **Main Branch:** `main`
-**Current Branch:** `chore/e2e-ci-enable`
 
 ---
 
@@ -92,40 +92,40 @@ MyInventory AI is an intelligent inventory management system that leverages AI-p
 
 ```
 myinventory-ai/
-├── client/              # React frontend
-│   ├── src/
-│   │   ├── components/  # React components
-│   │   ├── hooks/       # Custom React hooks
-│   │   ├── lib/         # Utilities
-│   │   └── pages/       # Route pages
-│   └── index.html       # Entry point
-├── server/              # Express backend
-│   ├── index.ts         # Server entry
-│   ├── routes.ts        # API routes
-│   ├── db/              # Database schema & migrations
-│   └── services/        # Business logic
-├── scripts/             # Build & utility scripts
-│   ├── db-reset.ts      # Database reset
-│   └── db-seed.ts       # Test data seeding
-├── tasks/               # PRDs & task documentation
-│   ├── 0001-prd-quick-fixes.md  # (canonical)
-│   ├── tasks-0001-prd-quick-fixes.md  # DEPRECATED
-│   └── PROTOCOLS.md     # Development protocols
-├── e2e/                 # Playwright E2E tests
-├── dist/                # Build output
-├── .context_audit/      # Documentation audit artifacts
-├── design_guidelines.md # UI/UX standards
-├── replit.md            # Architecture overview
-├── CHANGELOG.md         # Release notes
-├── CONTEXT.md           # This file
-├── package.json         # Dependencies & scripts
-├── vite.config.ts       # Vite configuration
-├── drizzle.config.ts    # Database configuration
-└── playwright.config.ts # E2E test configuration
+├── client/src/              # React frontend
+│   ├── components/          # UI components (ItemCard, Dashboard, CameraCapture, etc.)
+│   ├── hooks/               # Custom React hooks
+│   ├── lib/                 # API client, query config, upload helpers
+│   ├── pages/               # Route pages (home.tsx is the main SPA page)
+│   └── __tests__/           # Client unit tests
+├── server/                  # Express backend
+│   ├── index.ts             # Server entry point & bootstrap
+│   ├── routes.ts            # HTTP route definitions (thin layer)
+│   ├── services.ts          # DI container (AppServices) + test fakes
+│   ├── analyzer.ts          # IAnalyzer interface, OpenAIAnalyzer, MockAnalyzer
+│   ├── itemService.ts       # Business logic (item CRUD, AI analysis)
+│   ├── storage.ts           # DatabaseStorage (Drizzle/Neon)
+│   ├── objectStorage.ts     # Local filesystem image storage
+│   ├── openai.ts            # OpenAI client factory (cheap + premium)
+│   ├── fileValidation.ts    # MIME magic-number validation
+│   ├── errors.ts            # ApiError class + async handler wrapper
+│   ├── health/              # Health check endpoints
+│   └── tests/               # Server unit tests
+├── shared/schema.ts         # DB schema + Zod types (single source of truth)
+├── scripts/                 # Dev utility scripts (db-seed, db-reset, enforce-pnpm)
+├── tasks/                   # PRDs (0001–0010) & execution plans
+├── e2e/                     # Playwright E2E tests
+├── migrations/              # SQL migration files
+├── docs/                    # Setup guides, ADRs
+├── FOUNDATION.md            # Architectural principles & evolution roadmap
+├── README.md                # Project overview & quick start
+├── CONTEXT.md               # This file
+├── CHANGELOG.md             # Release history
+├── eslint.config.mjs        # ESLint configuration
+├── vite.config.ts           # Vite + client test config
+├── drizzle.config.ts        # Drizzle ORM config
+└── playwright.config.ts     # E2E test config
 ```
-
-**Tree Output:**
-See `.context_audit/tree.txt` for full repository structure listing.
 
 ---
 
@@ -153,10 +153,10 @@ See `.context_audit/tree.txt` for full repository structure listing.
 - Environment-aware error responses (verbose in dev, minimal in prod)
 
 **Key Integrations:**
-- OpenAI API for GPT-5 Vision image analysis
-- Object storage for user-uploaded images
+- OpenAI API for GPT-4o-mini / GPT-4o Vision image analysis (tiered: cheap first, premium fallback if confidence < 0.4)
+- Local filesystem storage for uploaded images (Railway persistent volume in production)
 - Barcode generation for inventory items
-- PDF export functionality
+- PDF/CSV export functionality
 
 **Data Flow:**
 1. User captures/uploads image → Frontend (React + Uppy)
@@ -172,7 +172,7 @@ See `.context_audit/tree.txt` for full repository structure listing.
 MyInventory AI follows 7 core architectural principles defined in `FOUNDATION.md`:
 
 1. **Media as First-Class Concept** - Items will evolve to support multiple media assets (images, PDFs, videos), not just a single imageUrl
-2. **Storage as Environment-Agnostic Abstraction** - ObjectStorageService supports dual backends (local filesystem, GCS) with path for multi-file scenarios
+2. **Storage as Environment-Agnostic Abstraction** - IObjectStorage interface with local filesystem implementation; designed for future cloud backend extensions
 3. **Upload as Pluggable Mechanism** - Reusable upload utilities (`uploadService.ts`), decoupled from page components
 4. **Containers as Hierarchical Entities** - Future support for property → room → box → item hierarchy using adjacency list pattern
 5. **Extensible Attributes as Flexible Data** - Framework for vertical-specific fields (auto parts, insurance) using JSONB or separate tables
@@ -195,16 +195,26 @@ See [FOUNDATION.md](./FOUNDATION.md) for complete guidance, evolution roadmap, i
    - Memory leak fixed (useState → useRef pattern)
 
 2. **AI-Powered Metadata Extraction**
-   - GPT-5 Vision API integration
+   - OpenAI GPT-4o-mini / GPT-4o Vision API (tiered analysis)
    - Automatic item description generation
-   - Resale value estimation with confidence indicators
+   - Resale value estimation with confidence indicators (low/medium/high)
    - Category/tag suggestions
 
-3. **Inventory Management**
+3. **Quick Capture Mode**
+   - Toggle to skip AI analysis during upload for bulk cataloging
+   - Items saved immediately with placeholder metadata ("Untitled Item")
+   - Deferred AI analysis via dedicated endpoint (`POST /api/items/:id/analyze`)
+
+4. **Multi-Image Support**
+   - Upload up to 10 images per item
+   - Image gallery viewer with navigation
+   - Both single (`image`) and multi (`images`) upload fields supported
+
+5. **Inventory Management**
    - Item cataloging with photos
    - Barcode generation & download
    - Optional storage location tagging
-   - Advanced filtering (location badges, date ranges)
+   - Advanced filtering (location badges, date ranges, value ranges)
 
 4. **Search & Discovery**
    - Debounced search (300ms) for performance
@@ -291,10 +301,14 @@ pnpm dev
 ### Development Commands
 
 ```bash
-pnpm dev              # Start dev server (client + backend)
+pnpm dev              # Start dev server (client + backend, port 5000)
+pnpm dev:api          # API-only server (for E2E testing)
+pnpm dev:ui           # Vite dev server only (port 5174, proxies to 5000)
 pnpm build            # Build for production
 pnpm start            # Run production build
 pnpm check            # TypeScript type checking
+pnpm lint             # ESLint check
+pnpm format           # Prettier format
 pnpm test             # Run all tests
 pnpm test:server      # Server unit tests
 pnpm test:client      # Client unit tests
@@ -396,18 +410,26 @@ Built on Tailwind's color primitives with custom CSS variables for theming.
 
 ### Endpoints
 
+**Health**
+```
+GET    /api/health          # System health check (includes AI status)
+GET    /api/health/openai   # OpenAI API connectivity check
+```
+
 **Inventory Items**
 ```
 GET    /api/items           # List all items
 GET    /api/items/:id       # Get single item
 POST   /api/items           # Create item with image upload (multipart/form-data)
+                            # Accepts: images[] (up to 10) or image (single, legacy)
+                            # Optional: skipAI=true for Quick Capture mode
 DELETE /api/items/:id       # Delete item
+POST   /api/items/:id/analyze  # Run AI analysis on existing item (Quick Capture deferred analysis)
 ```
 
 **Object Storage**
 ```
-POST   /api/objects/upload  # Get upload URL for object storage
-GET    /objects/:objectPath # Serve objects (images)
+GET    /objects/:objectPath # Serve stored images
 ```
 
 ### Error Response Format
@@ -440,7 +462,8 @@ GET    /objects/:objectPath # Serve objects (images)
 - `description` (text, not null)
 - `category` (text, not null)
 - `tags` (text[], not null, default: empty array)
-- `image_url` (text, not null)
+- `image_url` (text, not null) — primary/legacy single image
+- `image_urls` (text[], optional) — multi-image support (PRD 0004)
 - `barcode_data` (text, not null)
 - `estimated_value` (decimal(10,2), optional)
 - `value_confidence` (text, optional)
@@ -466,35 +489,35 @@ Schema: `shared/schema.ts`
 ### Required Variables
 
 ```bash
-# Database
-DATABASE_URL=postgresql://user:pass@host/db
+DATABASE_URL=postgresql://user:pass@host/db   # Neon PostgreSQL
+OPENAI_API_KEY=sk-...                          # OpenAI API key
+OPENAI_PROJECT_ID=proj-...                     # Required for sk-proj-* keys
+```
 
-# OpenAI
-OPENAI_API_KEY=sk-...
+### Optional Variables
 
-# Object Storage
-STORAGE_ENDPOINT=...
-STORAGE_ACCESS_KEY=...
-STORAGE_SECRET_KEY=...
-
-# Application
-NODE_ENV=development|production
-PORT=5000
+```bash
+NODE_ENV=development|production|api-only       # api-only = headless for E2E
+PORT=5000                                      # Server port (default: 5000)
+LOCAL_STORAGE_DIR=./uploads                    # Image storage dir (default: ./uploads)
+OPENAI_BASE_URL=https://api.openai.com/v1     # Override OpenAI endpoint
+ANALYZER_PROVIDER=openai|mock                  # Use mock to skip AI in development
+CORS_ORIGIN=https://your-domain.com            # Allowed origin in production
 ```
 
 ### Environment Files
 
 - `.env` - Local development (gitignored)
 - `.env.example` - Template with documentation
-- CI/CD secrets configured in pipeline
+- CI/CD secrets configured in GitHub Actions
 
-### Foundational Storage Abstraction
+### Storage
 
-MyInventory AI uses an environment-aware storage abstraction (`ObjectStorageService` in `server/objectStorage.ts`) that automatically selects the appropriate backend:
-- **Local Development:** Filesystem storage in `uploads/` directory
-- **Production (Replit):** Google Cloud Storage via Replit sidecar
+MyInventory AI uses local filesystem storage (`ObjectStorageService` in `server/objectStorage.ts`):
+- **Development:** `./uploads/` directory
+- **Production (Railway):** `/app/uploads` with persistent volume mount
 
-The storage service is designed to support multi-file scenarios. For extending storage backends or adding multi-image support, refer to `FOUNDATION.md` Principle 2 (Storage as Environment-Agnostic Abstraction) and Integration Patterns.
+The storage service implements `IObjectStorage` interface with `save()`, `read()`, and `download()` methods, supporting both single and multi-image storage paths.
 
 ---
 
@@ -532,31 +555,29 @@ The storage service is designed to support multi-file scenarios. For extending s
 
 ## Section 13: Current Work
 
-### Active Branch: `chore/e2e-ci-enable`
+### Active Branch: `feature/quick-capture`
 
-**Recent Commits:**
-```
-60d8ef6 fix(e2e): add nanoid as runtime dep and use standard ESM import
-eb9f892 fix: add nanoid to dependencies
-e3bd130 fix: use explicit nanoid import path for Node.js ESM compat
-ac5c823 test(db): use pg for reset/seed in CI; keep TCP-compatible defaults
-ba4a0fb ci: add Postgres service; seed DB; wire e2e to webServer
-```
-
-**Focus:** Establishing robust CI/CD pipeline with E2E testing
+**Focus:** Quick Capture mode for bulk cataloging + architecture refactoring
 
 **Status:**
-- ✅ E2E tests written (Playwright)
-- ✅ CI pipeline configured
-- ✅ PostgreSQL service in CI
-- ✅ Database reset/seed automation
-- 🚧 Final validation & merge
+- ✅ Quick Capture UI toggle (skip AI on upload)
+- ✅ Deferred AI analysis endpoint (`POST /api/items/:id/analyze`)
+- ✅ IAnalyzer strategy pattern (OpenAIAnalyzer, MockAnalyzer)
+- ✅ ItemService extraction from routes
+- ✅ IObjectStorage interface
+- ✅ Test fakes in services.ts (FakeDatabaseStorage, FakeObjectStorageService, FakeAnalyzer)
+- ✅ ESLint + Prettier configured
+- ✅ Dead code cleanup (modelPolicy.ts removed)
 
-### Next Priorities
+### Completed PRDs
 
-1. Complete E2E CI validation
-2. Merge technical debt fixes (PRD 0001)
-3. Plan next feature (PRD 0002)
+- PRD 0001: Technical debt fixes (Uppy memory leak, debounce, error handling)
+- PRD 0004: Multi-image upload support
+- PRD 0006: Automatic value estimation
+- PRD 0007: OpenAI dead code cleanup
+- PRD 0008: Cloudflare Tunnel for mobile testing
+- PRD 0009: Replit deployment
+- PRD 0010: Quick Capture mode (in progress)
 
 ---
 
@@ -603,8 +624,8 @@ ba4a0fb ci: add Postgres service; seed DB; wire e2e to webServer
 ### Code Style
 
 - **TypeScript:** Strict mode enabled
-- **Linting:** ESLint configuration
-- **Formatting:** Prettier (if configured)
+- **Linting:** ESLint 9 (flat config) with TypeScript + React hooks rules
+- **Formatting:** Prettier (`printWidth: 100`, double quotes, trailing commas)
 - **Naming:** camelCase for variables/functions, PascalCase for components
 - **Commits:** Conventional commits format preferred
 
