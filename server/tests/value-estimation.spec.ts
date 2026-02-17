@@ -1,53 +1,43 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { OpenAIAnalyzer } from '../analyzer';
 
 /**
  * Value Estimation Tests (PRD 0006)
  *
  * These tests verify the automatic value estimation feature including:
- * - Model policy returns all value fields
+ * - OpenAIAnalyzer returns all value fields
  * - Value format validation
  * - Confidence validation
  * - Graceful fallback on errors
  */
 
-// Mock the OpenAI clients
-vi.mock('../openai', () => ({
-  openaiCheap: {
+function createMockClient() {
+  return {
     chat: {
       completions: {
         create: vi.fn(),
       },
     },
-  },
-  openaiPremium: {
-    chat: {
-      completions: {
-        create: vi.fn(),
-      },
-    },
-  },
-}));
+  } as any;
+}
 
-import {
-  analyzeWithCheapModel,
-  analyzeWithPremiumModel,
-  analyzeImagePolicy,
-  type AnalysisResult,
-} from '../modelPolicy';
-import { openaiCheap, openaiPremium } from '../openai';
-
-describe('Value Estimation - Model Policy (PRD 0006)', () => {
+describe('Value Estimation - OpenAIAnalyzer (PRD 0006)', () => {
   const mockImageBuffer = Buffer.from('fake-image-data');
+  let cheapClient: ReturnType<typeof createMockClient>;
+  let premiumClient: ReturnType<typeof createMockClient>;
+  let analyzer: OpenAIAnalyzer;
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    cheapClient = createMockClient();
+    premiumClient = createMockClient();
+    analyzer = new OpenAIAnalyzer(cheapClient, premiumClient);
   });
 
   afterEach(() => {
     vi.resetAllMocks();
   });
 
-  describe('analyzeWithCheapModel()', () => {
+  describe('analyze() with cheap model', () => {
     it('should return all value fields from AI response', async () => {
       const mockResponse = {
         choices: [{
@@ -66,9 +56,9 @@ describe('Value Estimation - Model Policy (PRD 0006)', () => {
         }],
       };
 
-      vi.mocked(openaiCheap.chat.completions.create).mockResolvedValue(mockResponse as any);
+      cheapClient.chat.completions.create.mockResolvedValue(mockResponse);
 
-      const result = await analyzeWithCheapModel(mockImageBuffer);
+      const result = await analyzer.analyze(mockImageBuffer);
 
       expect(result.name).toBe('Vintage Camera');
       expect(result.description).toBe('A well-preserved 35mm film camera');
@@ -98,9 +88,9 @@ describe('Value Estimation - Model Policy (PRD 0006)', () => {
         }],
       };
 
-      vi.mocked(openaiCheap.chat.completions.create).mockResolvedValue(mockResponse as any);
+      cheapClient.chat.completions.create.mockResolvedValue(mockResponse);
 
-      const result = await analyzeWithCheapModel(mockImageBuffer);
+      const result = await analyzer.analyze(mockImageBuffer);
 
       expect(result.estimatedValue).toBe('5.00');
     });
@@ -123,9 +113,9 @@ describe('Value Estimation - Model Policy (PRD 0006)', () => {
         }],
       };
 
-      vi.mocked(openaiCheap.chat.completions.create).mockResolvedValue(mockResponse as any);
+      cheapClient.chat.completions.create.mockResolvedValue(mockResponse);
 
-      const result = await analyzeWithCheapModel(mockImageBuffer);
+      const result = await analyzer.analyze(mockImageBuffer);
 
       expect(result.estimatedValue).toBeNull();
     });
@@ -148,9 +138,9 @@ describe('Value Estimation - Model Policy (PRD 0006)', () => {
         }],
       };
 
-      vi.mocked(openaiCheap.chat.completions.create).mockResolvedValue(mockResponse as any);
+      cheapClient.chat.completions.create.mockResolvedValue(mockResponse);
 
-      const result = await analyzeWithCheapModel(mockImageBuffer);
+      const result = await analyzer.analyze(mockImageBuffer);
 
       expect(result.valueConfidence).toBeNull();
     });
@@ -167,9 +157,9 @@ describe('Value Estimation - Model Policy (PRD 0006)', () => {
         }],
       };
 
-      vi.mocked(openaiCheap.chat.completions.create).mockResolvedValue(mockResponse as any);
+      cheapClient.chat.completions.create.mockResolvedValue(mockResponse);
 
-      const result = await analyzeWithCheapModel(mockImageBuffer);
+      const result = await analyzer.analyze(mockImageBuffer);
 
       expect(result.name).toBe('Item');
       expect(result.category).toBe('Uncategorized');
@@ -189,65 +179,13 @@ describe('Value Estimation - Model Policy (PRD 0006)', () => {
         }],
       };
 
-      vi.mocked(openaiCheap.chat.completions.create).mockResolvedValue(mockResponse as any);
+      cheapClient.chat.completions.create.mockResolvedValue(mockResponse);
 
-      await expect(analyzeWithCheapModel(mockImageBuffer)).rejects.toThrow('No response from AI');
+      await expect(analyzer.analyze(mockImageBuffer)).rejects.toThrow('No response from AI');
     });
   });
 
-  describe('analyzeWithPremiumModel()', () => {
-    it('should return all value fields from AI response', async () => {
-      const mockResponse = {
-        choices: [{
-          message: {
-            content: JSON.stringify({
-              name: 'Antique Desk',
-              description: 'Oak roll-top desk from early 1900s',
-              category: 'Furniture',
-              tags: ['antique', 'desk', 'oak', 'vintage'],
-              confidence: 0.95,
-              estimatedValue: '850.00',
-              valueConfidence: 'high',
-              valueRationale: 'Based on comparable antique furniture sales',
-            }),
-          },
-        }],
-      };
-
-      vi.mocked(openaiPremium.chat.completions.create).mockResolvedValue(mockResponse as any);
-
-      const result = await analyzeWithPremiumModel(mockImageBuffer);
-
-      expect(result.name).toBe('Antique Desk');
-      expect(result.estimatedValue).toBe('850.00');
-      expect(result.valueConfidence).toBe('high');
-      expect(result.valueRationale).toBe('Based on comparable antique furniture sales');
-      expect(result.confidence).toBe(0.95);
-    });
-
-    it('should default to 0.9 confidence if not provided', async () => {
-      const mockResponse = {
-        choices: [{
-          message: {
-            content: JSON.stringify({
-              name: 'Item',
-              description: 'Test',
-              category: 'Other',
-              // No confidence provided
-            }),
-          },
-        }],
-      };
-
-      vi.mocked(openaiPremium.chat.completions.create).mockResolvedValue(mockResponse as any);
-
-      const result = await analyzeWithPremiumModel(mockImageBuffer);
-
-      expect(result.confidence).toBe(0.9);
-    });
-  });
-
-  describe('analyzeImagePolicy()', () => {
+  describe('analyze() with premium fallback', () => {
     it('should use cheap model result when confidence >= 0.4', async () => {
       const cheapResponse = {
         choices: [{
@@ -266,14 +204,14 @@ describe('Value Estimation - Model Policy (PRD 0006)', () => {
         }],
       };
 
-      vi.mocked(openaiCheap.chat.completions.create).mockResolvedValue(cheapResponse as any);
+      cheapClient.chat.completions.create.mockResolvedValue(cheapResponse);
 
-      const result = await analyzeImagePolicy(mockImageBuffer);
+      const result = await analyzer.analyze(mockImageBuffer);
 
       expect(result.name).toBe('Phone');
       expect(result.estimatedValue).toBe('200.00');
       // Premium model should not have been called
-      expect(openaiPremium.chat.completions.create).not.toHaveBeenCalled();
+      expect(premiumClient.chat.completions.create).not.toHaveBeenCalled();
     });
 
     it('should fallback to premium model when cheap confidence < 0.4', async () => {
@@ -311,18 +249,18 @@ describe('Value Estimation - Model Policy (PRD 0006)', () => {
         }],
       };
 
-      vi.mocked(openaiCheap.chat.completions.create).mockResolvedValue(cheapResponse as any);
-      vi.mocked(openaiPremium.chat.completions.create).mockResolvedValue(premiumResponse as any);
+      cheapClient.chat.completions.create.mockResolvedValue(cheapResponse);
+      premiumClient.chat.completions.create.mockResolvedValue(premiumResponse);
 
-      const result = await analyzeImagePolicy(mockImageBuffer);
+      const result = await analyzer.analyze(mockImageBuffer);
 
       // Should return premium result
       expect(result.name).toBe('Rare Collectible');
       expect(result.estimatedValue).toBe('450.00');
       expect(result.confidence).toBe(0.9);
       // Both models should have been called
-      expect(openaiCheap.chat.completions.create).toHaveBeenCalled();
-      expect(openaiPremium.chat.completions.create).toHaveBeenCalled();
+      expect(cheapClient.chat.completions.create).toHaveBeenCalled();
+      expect(premiumClient.chat.completions.create).toHaveBeenCalled();
     });
 
     it('should use cheap model at exactly 0.4 confidence threshold', async () => {
@@ -343,14 +281,45 @@ describe('Value Estimation - Model Policy (PRD 0006)', () => {
         }],
       };
 
-      vi.mocked(openaiCheap.chat.completions.create).mockResolvedValue(cheapResponse as any);
+      cheapClient.chat.completions.create.mockResolvedValue(cheapResponse);
 
-      const result = await analyzeImagePolicy(mockImageBuffer);
+      const result = await analyzer.analyze(mockImageBuffer);
 
       expect(result.confidence).toBe(0.4);
       expect(result.estimatedValue).toBe('25.00');
       // Premium should not be called at exactly 0.4
-      expect(openaiPremium.chat.completions.create).not.toHaveBeenCalled();
+      expect(premiumClient.chat.completions.create).not.toHaveBeenCalled();
+    });
+
+    it('should default to 0.9 confidence for premium model if not provided', async () => {
+      // Force fallback to premium by returning low confidence from cheap
+      cheapClient.chat.completions.create.mockResolvedValue({
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              name: 'Unknown',
+              confidence: 0.1,
+            }),
+          },
+        }],
+      });
+
+      premiumClient.chat.completions.create.mockResolvedValue({
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              name: 'Item',
+              description: 'Test',
+              category: 'Other',
+              // No confidence provided — should default to 0.9 for premium
+            }),
+          },
+        }],
+      });
+
+      const result = await analyzer.analyze(mockImageBuffer);
+
+      expect(result.confidence).toBe(0.9);
     });
   });
 
@@ -382,9 +351,9 @@ describe('Value Estimation - Model Policy (PRD 0006)', () => {
           }],
         };
 
-        vi.mocked(openaiCheap.chat.completions.create).mockResolvedValue(mockResponse as any);
+        cheapClient.chat.completions.create.mockResolvedValue(mockResponse);
 
-        const result = await analyzeWithCheapModel(mockImageBuffer);
+        const result = await analyzer.analyze(mockImageBuffer);
         expect(result.estimatedValue).toBe(testCase.expected);
       }
     });
@@ -417,9 +386,9 @@ describe('Value Estimation - Model Policy (PRD 0006)', () => {
           }],
         };
 
-        vi.mocked(openaiCheap.chat.completions.create).mockResolvedValue(mockResponse as any);
+        cheapClient.chat.completions.create.mockResolvedValue(mockResponse);
 
-        const result = await analyzeWithCheapModel(mockImageBuffer);
+        const result = await analyzer.analyze(mockImageBuffer);
         expect(result.estimatedValue).toBeNull();
       }
     });
@@ -447,9 +416,9 @@ describe('Value Estimation - Model Policy (PRD 0006)', () => {
           }],
         };
 
-        vi.mocked(openaiCheap.chat.completions.create).mockResolvedValue(mockResponse as any);
+        cheapClient.chat.completions.create.mockResolvedValue(mockResponse);
 
-        const result = await analyzeWithCheapModel(mockImageBuffer);
+        const result = await analyzer.analyze(mockImageBuffer);
         expect(result.valueConfidence).toBe(level);
       }
     });
@@ -475,9 +444,9 @@ describe('Value Estimation - Model Policy (PRD 0006)', () => {
           }],
         };
 
-        vi.mocked(openaiCheap.chat.completions.create).mockResolvedValue(mockResponse as any);
+        cheapClient.chat.completions.create.mockResolvedValue(mockResponse);
 
-        const result = await analyzeWithCheapModel(mockImageBuffer);
+        const result = await analyzer.analyze(mockImageBuffer);
         expect(result.valueConfidence).toBeNull();
       }
     });

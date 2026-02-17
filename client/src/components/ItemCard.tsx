@@ -3,7 +3,7 @@ import { InventoryItem } from "@shared/schema";
 import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Pencil, Trash2, Maximize2, Info, TrendingUp, TrendingDown, Minus, ImageIcon, MapPin, Images, Sparkles, Loader2 } from "lucide-react";
+import { Trash2, Maximize2, TrendingUp, TrendingDown, Minus, ImageIcon, MapPin, Images, Sparkles, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   Tooltip,

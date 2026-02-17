@@ -1,26 +1,5 @@
 import 'dotenv/config';
 
-// --- BEGIN DEBUG ---
-import { existsSync } from "fs";
-import { join } from "path";
-console.log("DEBUG: process.cwd() =", process.cwd());
-console.log("DEBUG: import.meta.dirname =", import.meta.dirname);
-console.log(
-  "DEBUG: .env exists in CWD?",
-  existsSync(join(process.cwd(), ".env"))
-);
-console.log("DEBUG: Loaded OPENAI_PROJECT_ID =", process.env.OPENAI_PROJECT_ID);
-console.log("DEBUG: Loaded OPENAI_API_KEY prefix =", process.env.OPENAI_API_KEY?.slice(0, 10));
-// --- END DEBUG ---
-
-// Diagnostic: Show API key prefix at startup (BEFORE any services are loaded)
-console.log("Loaded API key prefix:", process.env.OPENAI_API_KEY?.slice(0, 10) || "NOT SET");
-
-// Process-level crash traps for debugging
-process.on("uncaughtException", e => console.error("uncaughtException:", e));
-process.on("unhandledRejection", e => console.error("unhandledRejection:", e));
-process.on("exit", code => console.error("exit code:", code));
-
 import express, { type Request, Response, NextFunction } from "express";
 import cors from "cors";
 import { registerRoutes } from "./routes";
@@ -28,7 +7,6 @@ import { loadAppConfig, createProdServices } from "./services";
 import { setupVite, serveStatic, log } from "./vite";
 import { ApiError } from "./errors";
 import { promises as fs } from "fs";
-import path from "path";
 
 const app = express();
 
@@ -88,8 +66,6 @@ app.use((req, res, next) => {
 
 (async () => {
   try {
-    console.log("A: entering main");
-
     // Load and validate application configuration (PRD 0005)
     const config = loadAppConfig();
     log(`🔧 Storage backend: Local filesystem (${config.localStorageDir})`);
@@ -105,7 +81,6 @@ app.use((req, res, next) => {
 
     // Initialize service container (PRD 0005)
     const services = await createProdServices(config);
-    console.log("B: after createProdServices");
 
   // Register routes with injected services (PRD 0005)
   const server = await registerRoutes(app, services);
@@ -167,24 +142,7 @@ app.use((req, res, next) => {
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || '5000', 10);
-  console.log("C: before app.listen");
-  server.on("error", (err) => console.error("listen error:", err));
   server.listen(port, "0.0.0.0", () => {
-    console.log("D: inside listen callback");
-    console.log("DEBUG: server.listen callback fired for port =", port);
-
-    import("node:net").then(({ Socket }) => {
-      const s = new Socket();
-      s.once("error", err => {
-        console.log("DEBUG: test connection error (server NOT listening):", err);
-      });
-      s.once("connect", () => {
-        console.log("DEBUG: test connection SUCCESS (server IS listening)");
-        s.end();
-      });
-      s.connect(port, "127.0.0.1");
-    });
-
     log(`serving on port ${port}`);
   });
   } catch (err) {

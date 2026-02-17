@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup } from '@testing-library/react';
 import { ObjectUploader } from '@/components/ObjectUploader';
-import Uppy from '@uppy/core';
+// Uppy type is used implicitly via the mock below
 
 // Track all Uppy instances created
 const uppyInstances: any[] = [];
@@ -10,14 +10,14 @@ const uppyInstances: any[] = [];
 vi.mock('@uppy/core', () => {
   class MockUppy {
     private mockPlugins: any[] = [];
-    private mockHandlers: Record<string, Function[]> = {};
+    private mockHandlers: Record<string, ((...args: unknown[]) => void)[]> = {};
 
     public use = vi.fn((plugin, config) => {
       this.mockPlugins.push({ plugin, config });
       return this;
     });
 
-    public on = vi.fn((event: string, handler: Function) => {
+    public on = vi.fn((event: string, handler: (...args: unknown[]) => void) => {
       if (!this.mockHandlers[event]) {
         this.mockHandlers[event] = [];
       }
@@ -25,7 +25,7 @@ vi.mock('@uppy/core', () => {
       return this;
     });
 
-    public off = vi.fn((event: string, handler: Function) => {
+    public off = vi.fn((event: string, handler: (...args: unknown[]) => void) => {
       if (this.mockHandlers[event]) {
         const index = this.mockHandlers[event].indexOf(handler);
         if (index > -1) {
@@ -45,7 +45,7 @@ vi.mock('@uppy/core', () => {
       return this;
     });
 
-    public close = vi.fn((opts) => {
+    public close = vi.fn((_opts) => {
       // Clear all handlers when closing
       Object.keys(this.mockHandlers).forEach(key => {
         this.mockHandlers[key] = [];
@@ -70,7 +70,7 @@ vi.mock('@uppy/aws-s3', () => ({
 }));
 
 vi.mock('@uppy/react/dashboard-modal', () => ({
-  default: vi.fn(({ open, uppy }) => {
+  default: vi.fn(({ open, uppy: _uppy }) => {
     if (!open) return null;
     return <div data-testid="uppy-dashboard-modal">Uppy Dashboard</div>;
   }),
