@@ -28,21 +28,22 @@ pnpm install
 # Configure environment
 cp .env.example .env
 # Edit .env with your DATABASE_URL and OPENAI_API_KEY
+# Set INVENTORY_PASSWORD before deploying publicly
 
 # Set up database
 pnpm db:push
 pnpm db:seed    # optional: populate with sample data
 
 # Start development server
-pnpm dev        # http://localhost:5000
+pnpm dev        # http://localhost:$PORT (default 5000)
 ```
 
 ## Scripts
 
 | Command | Description |
 |---|---|
-| `pnpm dev` | Start full-stack dev server (port 5000) |
-| `pnpm dev:api` | API-only server (for E2E testing) |
+| `pnpm dev` | Start full-stack dev server on `PORT` (default 5000) |
+| `pnpm dev:api` | API-only server on `PORT` (for E2E testing) |
 | `pnpm dev:ui` | Vite dev server only (port 5174, proxies API to 5000) |
 | `pnpm build` | Production build (Vite + esbuild) |
 | `pnpm start` | Run production build |
@@ -66,6 +67,8 @@ See [`.env.example`](.env.example) for the full list. Required:
 | `DATABASE_URL` | Neon PostgreSQL connection string |
 | `OPENAI_API_KEY` | OpenAI API key |
 | `OPENAI_PROJECT_ID` | Required if using project-scoped keys (`sk-proj-*`) |
+| `SESSION_SECRET` | Session cookie signing secret |
+| `INVENTORY_PASSWORD` | Required in production to protect the single-user app |
 
 ## Architecture
 

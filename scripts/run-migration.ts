@@ -2,10 +2,6 @@ import 'dotenv/config';
 import { getPgPoolFromUrl } from './_db';
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const url = process.env.DATABASE_URL_TEST || process.env.DATABASE_URL;
 if (!url) {
@@ -17,10 +13,13 @@ async function main() {
   const pool = getPgPoolFromUrl(url);
   const client = await pool.connect();
 
-  const migrationPath = path.join(__dirname, "../migrations/0001_uuid_default.sql");
+  const migrationArg = process.argv[2] ?? "migrations/0001_uuid_default.sql";
+  const migrationPath = path.isAbsolute(migrationArg)
+    ? migrationArg
+    : path.resolve(process.cwd(), migrationArg);
   const migrationSql = fs.readFileSync(migrationPath, "utf-8");
 
-  console.log("Running migration...");
+  console.log(`Running migration: ${migrationPath}`);
   console.log(migrationSql);
 
   try {

@@ -267,7 +267,9 @@ describe('Error Handling', () => {
       ];
 
       for (const test of tests) {
-        const response = await request(app)[test.method](test.endpoint).send({});
+        const response = await request(app)
+          [test.method as 'get' | 'post'](test.endpoint)
+          .send({});
 
         expect(response.body).toHaveProperty('error');
         expect(response.body).toHaveProperty('code');

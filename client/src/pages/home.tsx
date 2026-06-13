@@ -8,7 +8,7 @@ import { SearchFilter } from "@/components/SearchFilter";
 import { BarcodeModal } from "@/components/BarcodeModal";
 import { ExportModal } from "@/components/ExportModal";
 import { Button } from "@/components/ui/button";
-import { Upload, Download, Loader2, Camera, Package, Zap } from "lucide-react";
+import { Upload, Download, Loader2, Camera, Package, Zap, LogOut } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -30,13 +30,23 @@ export default function Home() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
+  const logoutMutation = useMutation({
+    mutationFn: async () => {
+      return await apiRequest("POST", "/api/auth/logout");
+    },
+    onSuccess: () => {
+      queryClient.clear();
+      window.location.reload();
+    },
+  });
+
   useEffect(() => {
     fetch("/api/health")
       .then(r => r.json())
       .then(h => {
         console.log("BACKEND HEALTH:", h);
-        if (!h.ok || !h.ai?.ok) {
-          alert("Backend or AI is not available. Check console.");
+        if (!h.ok) {
+          alert("Backend is not available. Check console.");
         }
       })
       .catch(() => alert("Cannot reach backend at /api/health"));
@@ -324,6 +334,15 @@ export default function Home() {
             <Button onClick={() => setShowCapture(true)} data-testid="button-add-item">
               <Camera className="w-4 h-4 mr-2" />
               Add Item
+            </Button>
+            <Button
+              onClick={() => logoutMutation.mutate()}
+              variant="ghost"
+              size="icon"
+              aria-label="Sign out"
+              data-testid="button-logout"
+            >
+              <LogOut className="w-4 h-4" />
             </Button>
           </div>
         </div>

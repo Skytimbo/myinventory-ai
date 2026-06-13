@@ -2,6 +2,7 @@ import 'dotenv/config';
 
 import express, { type Request, Response, NextFunction } from "express";
 import cors from "cors";
+import session from "express-session";
 import { registerRoutes } from "./routes";
 import { loadAppConfig, createProdServices } from "./services";
 import { setupVite, serveStatic, log } from "./vite";
@@ -9,18 +10,47 @@ import { ApiError } from "./errors";
 import { promises as fs } from "fs";
 
 const app = express();
+const isProduction = process.env.NODE_ENV === "production";
+
+if (isProduction) {
+  app.set("trust proxy", 1);
+}
 
 // CORS configuration for Railway deployment
-// In development: Allow all origins
-// In production: Allow Railway frontend (same origin) + localhost for testing
-app.use(cors({
-  origin: process.env.NODE_ENV === 'production'
-    ? [process.env.CORS_ORIGIN || true]
-    : true,
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-}));
+// In production, same-origin requests need no CORS headers. Set CORS_ORIGIN
+// only when a separate trusted frontend origin must call the API.
+const corsOrigin = isProduction
+  ? process.env.CORS_ORIGIN?.split(",").map((origin) => origin.trim())
+  : true;
+
+app.use(
+  cors({
+    origin: corsOrigin || false,
+    credentials: Boolean(corsOrigin),
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
+
+const sessionSecret = process.env.SESSION_SECRET;
+if (isProduction && !sessionSecret) {
+  throw new Error("SESSION_SECRET is required in production.");
+}
+
+app.use(
+  session({
+    name: "myinventory.sid",
+    secret: sessionSecret || "development-only-session-secret",
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: isProduction,
+      maxAge: 1000 * 60 * 60 * 24 * 30,
+    },
+  })
+);
 
 declare module 'http' {
   interface IncomingMessage {

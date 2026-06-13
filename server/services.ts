@@ -243,11 +243,12 @@ export class FakeDatabaseStorage implements IStorage {
     const id = randomUUID();
     const createdAt = new Date().toISOString();
 
-    const newItem: InventoryItem = {
+    const newItem = {
       id,
       createdAt,
+      analysisMetadata: null,
       ...item,
-    };
+    } as InventoryItem;
 
     this.items.set(id, newItem);
     return newItem;
@@ -266,10 +267,10 @@ export class FakeDatabaseStorage implements IStorage {
       return null;
     }
 
-    const updated: InventoryItem = {
+    const updated = {
       ...existing,
       ...updates,
-    };
+    } as InventoryItem;
 
     this.items.set(id, updated);
     return updated;

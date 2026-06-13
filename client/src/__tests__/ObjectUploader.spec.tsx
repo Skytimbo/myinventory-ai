@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup } from '@testing-library/react';
 import { ObjectUploader } from '@/components/ObjectUploader';
-// Uppy type is used implicitly via the mock below
+import type { UploadResult } from '@uppy/core';
+
+type GetUploadParameters = () => Promise<{ method: "PUT"; url: string }>;
+type OnComplete = (result: UploadResult<Record<string, unknown>, Record<string, unknown>>) => void;
 
 // Track all Uppy instances created
 const uppyInstances: any[] = [];
@@ -77,8 +80,8 @@ vi.mock('@uppy/react/dashboard-modal', () => ({
 }));
 
 describe('ObjectUploader Memory Leak Prevention', () => {
-  let mockGetUploadParameters: ReturnType<typeof vi.fn>;
-  let mockOnComplete: ReturnType<typeof vi.fn>;
+  let mockGetUploadParameters: ReturnType<typeof vi.fn<GetUploadParameters>>;
+  let mockOnComplete: ReturnType<typeof vi.fn<OnComplete>>;
 
   beforeEach(() => {
     mockGetUploadParameters = vi.fn().mockResolvedValue({

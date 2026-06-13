@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS inventory_items (
 
   -- Optional metadata
   location TEXT,                         -- Physical storage location
+  analysis_metadata JSONB,               -- AI analysis provenance and diagnostics
 
   -- Timestamps
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP

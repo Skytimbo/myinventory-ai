@@ -1,7 +1,20 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, uuid, decimal } from "drizzle-orm/pg-core";
+import { pgTable, text, uuid, decimal, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+
+export const analysisMetadataSchema = z
+  .object({
+    model: z.string().optional(),
+    timestamp: z.string().optional(),
+    version: z.string().optional(),
+    imageHash: z.string().optional(),
+    latencyMs: z.number().optional(),
+    note: z.string().nullable().optional(),
+  })
+  .nullable();
+
+export type AnalysisMetadata = z.infer<typeof analysisMetadataSchema>;
 
 export const inventoryItems = pgTable("inventory_items", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -16,10 +29,13 @@ export const inventoryItems = pgTable("inventory_items", {
   valueConfidence: text("value_confidence"),
   valueRationale: text("value_rationale"),
   location: text("location"),
+  analysisMetadata: jsonb("analysis_metadata").$type<AnalysisMetadata>(),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
-export const insertInventoryItemSchema = createInsertSchema(inventoryItems).omit({
+export const insertInventoryItemSchema = createInsertSchema(inventoryItems, {
+  analysisMetadata: analysisMetadataSchema.optional(),
+}).omit({
   id: true,
   createdAt: true,
 });

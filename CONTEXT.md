@@ -7,7 +7,7 @@ format_spec: v1-phase1-yaml-front-matter-sections-0-15
 source_commit: "683dd31d18875a9cf9620678bd89f315c4ac7002"
 machine_readable_index: ".context_audit/doc_inventory.csv"
 verification:
-  sha256_of_this_file: "62758a50bb4c051b53dcc5abab969ce7c1a30f397c786f9bc92e693d28b7601e"
+  sha256_of_this_file: "3472f8a99b0f43828a61d459b577f107fe9aa2d2513fec673cf21aa4cf9f63cc"
 sources:
   - path: FOUNDATION.md
     role: foundational-architecture
@@ -289,6 +289,7 @@ pnpm install
 # Configure environment
 cp .env.example .env
 # Edit .env with DATABASE_URL, OPENAI_API_KEY, etc.
+# Set INVENTORY_PASSWORD before deploying publicly
 
 # Set up database
 pnpm db:push
@@ -301,7 +302,7 @@ pnpm dev
 ### Development Commands
 
 ```bash
-pnpm dev              # Start dev server (client + backend, port 5000)
+pnpm dev              # Start dev server (client + backend, PORT or 5000)
 pnpm dev:api          # API-only server (for E2E testing)
 pnpm dev:ui           # Vite dev server only (port 5174, proxies to 5000)
 pnpm build            # Build for production
@@ -405,18 +406,30 @@ Built on Tailwind's color primitives with custom CSS variables for theming.
 
 ### Base URL
 
-- Development: `http://localhost:5000`
-- Production: [TBD]
+- Development: `http://localhost:$PORT` (default `5000`)
+- Production: `https://myinventory-ai-production.up.railway.app` (Railway)
 
 ### Endpoints
 
-**Health**
+**Public Health**
 ```
-GET    /api/health          # System health check (includes AI status)
-GET    /api/health/openai   # OpenAI API connectivity check
+GET    /api/health          # Minimal liveness check: { ok: true }
 ```
 
-**Inventory Items**
+**Authentication**
+```
+GET    /api/auth/status     # Session state and whether password auth is enabled
+POST   /api/auth/login      # Create password-backed session
+POST   /api/auth/logout     # Destroy session
+```
+
+**Protected Health**
+```
+GET    /api/health/openai       # OpenAI environment/configuration check
+GET    /api/health/openai/live  # Live OpenAI connectivity check
+```
+
+**Protected Inventory Items**
 ```
 GET    /api/items           # List all items
 GET    /api/items/:id       # Get single item
@@ -425,9 +438,10 @@ POST   /api/items           # Create item with image upload (multipart/form-data
                             # Optional: skipAI=true for Quick Capture mode
 DELETE /api/items/:id       # Delete item
 POST   /api/items/:id/analyze  # Run AI analysis on existing item (Quick Capture deferred analysis)
+POST   /api/items/:id/reanalyze # Re-run AI analysis on existing item
 ```
 
-**Object Storage**
+**Protected Object Storage**
 ```
 GET    /objects/:objectPath # Serve stored images
 ```
@@ -444,6 +458,10 @@ GET    /objects/:objectPath # Serve stored images
 **Standard Error Codes:**
 - `NOT_FOUND` - Resource not found
 - `VALIDATION_ERROR` - Invalid input
+- `AUTH_REQUIRED` - Login required
+- `INVALID_PASSWORD` - Password login failed
+- `LOGIN_RATE_LIMITED` - Too many login attempts
+- `AI_RATE_LIMITED` - Too many AI-backed requests
 - `UPSTREAM_AI` - OpenAI API error
 - `UNHANDLED` - Unexpected server error
 
@@ -469,6 +487,7 @@ GET    /objects/:objectPath # Serve stored images
 - `value_confidence` (text, optional)
 - `value_rationale` (text, optional)
 - `location` (text, optional)
+- `analysis_metadata` (jsonb, optional) — AI provenance/diagnostics
 - `created_at` (text, not null, default: CURRENT_TIMESTAMP)
 
 ### Schema Management
@@ -492,6 +511,8 @@ Schema: `shared/schema.ts`
 DATABASE_URL=postgresql://user:pass@host/db   # Neon PostgreSQL
 OPENAI_API_KEY=sk-...                          # OpenAI API key
 OPENAI_PROJECT_ID=proj-...                     # Required for sk-proj-* keys
+SESSION_SECRET=...                             # Required in production
+INVENTORY_PASSWORD=...                         # Required in production
 ```
 
 ### Optional Variables
@@ -585,9 +606,9 @@ The storage service implements `IObjectStorage` interface with `save()`, `read()
 
 ### Current Limitations
 
-1. **Single User:** No authentication/multi-tenancy yet
+1. **Single User:** Password-protected session auth only; no multi-user roles/tenancy yet
 2. **Object Storage:** Configuration required for image uploads
-3. **AI Rate Limits:** OpenAI API quota constraints
+3. **AI Rate Limits:** Basic per-IP limits only; OpenAI account quota still applies
 4. **Mobile App:** Web-only (no native mobile app)
 5. **Offline Support:** Requires internet connection
 

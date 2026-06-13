@@ -7,6 +7,9 @@ server/public
 vite.config.ts.*
 *.tar.gz
 uploads/
+codebase-index.json
+playwright-report/
+test-results/
 
 # Foreign package manager lockfiles
 package-lock.json

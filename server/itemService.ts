@@ -13,7 +13,7 @@
  * All dependencies are constructor-injected for testability.
  */
 
-import { randomUUID } from "crypto";
+import { randomUUID, createHash } from "crypto";
 import type { IStorage } from "./storage";
 import type { IObjectStorage } from "./objectStorage";
 import type { IAnalyzer, AnalysisResult } from "./analyzer";
@@ -26,6 +26,10 @@ const mimeToExt: Record<string, string> = {
   "image/png": "png",
   "image/webp": "webp",
 };
+
+function hashBuffer(buffer: Buffer): string {
+  return createHash("sha256").update(buffer).digest("hex");
+}
 
 /**
  * Options for creating a new inventory item
@@ -93,7 +97,21 @@ export class ItemService implements IItemService {
     const itemId = randomUUID();
 
     // Run AI analysis (or skip for Quick Capture)
+    const analysisStart = Date.now();
     const { analysis, aiWarning } = await this.getAnalysis(files[0], skipAI);
+    const latencyMs = Date.now() - analysisStart;
+
+    // Compute image hash for traceability
+    const imageHash = files[0].buffer ? hashBuffer(files[0].buffer) : undefined;
+
+    const analysisMetadata = {
+      model: skipAI ? "none" : "openai",
+      timestamp: new Date().toISOString(),
+      version: "v1",
+      imageHash,
+      latencyMs,
+      note: aiWarning || null,
+    };
 
     // Save images to storage
     const imageUrls = await this.saveImages(files, itemId);
@@ -114,6 +132,7 @@ export class ItemService implements IItemService {
       valueConfidence: analysis.valueConfidence,
       valueRationale: analysis.valueRationale,
       location,
+      analysisMetadata,
     });
 
     return { item, aiWarning };
@@ -139,7 +158,18 @@ export class ItemService implements IItemService {
     const imageBuffer = await this.objectStorage.read(item.imageUrl);
 
     // Run AI analysis
+    const analysisStart = Date.now();
     const analysis = await this.analyzer.analyze(imageBuffer);
+    const latencyMs = Date.now() - analysisStart;
+
+    const analysisMetadata = {
+      model: "openai",
+      timestamp: new Date().toISOString(),
+      version: "v2",
+      imageHash: hashBuffer(imageBuffer),
+      latencyMs,
+      note: null,
+    };
 
     // Update item with AI results
     const updated = await this.storage.updateItem(itemId, {
@@ -150,6 +180,7 @@ export class ItemService implements IItemService {
       estimatedValue: analysis.estimatedValue,
       valueConfidence: analysis.valueConfidence,
       valueRationale: analysis.valueRationale,
+      analysisMetadata,
     });
 
     if (!updated) {

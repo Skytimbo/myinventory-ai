@@ -11,7 +11,7 @@
 **Code Changes for Railway:**
 - ✅ Updated `server/objectStorage.ts` to support Railway persistent volumes
 - ✅ Added `LOCAL_STORAGE_DIR` environment variable support
-- ✅ Added `USE_LOCAL_STORAGE` flag to override Replit GCS
+- ✅ Added single-user password protection for public deployments
 - ✅ All 34 server tests passing
 
 **Helper Scripts Created:**
@@ -49,10 +49,11 @@
 ```bash
 OPENAI_API_KEY=sk-your-actual-openai-key-here
 OPENAI_PROJECT_ID=proj_xxxxxxxxxxxxx
+SESSION_SECRET=<generate with: node -e "console.log(require('crypto').randomBytes(64).toString('base64'))">
+INVENTORY_PASSWORD=<strong password for the login screen>
 PORT=5000
 NODE_ENV=production
 LOCAL_STORAGE_DIR=/app/uploads
-USE_LOCAL_STORAGE=true
 ```
 
 **Note:** `OPENAI_PROJECT_ID` is required if using project-scoped API keys (starting with `sk-proj-`). Find your project ID at: https://platform.openai.com/settings/organization/projects
@@ -95,6 +96,12 @@ psql "$RAILWAY_DATABASE_URL" < backups/railway-migration-YYYYMMDD-HHMMSS/databas
 psql "$RAILWAY_DATABASE_URL" -c 'SELECT COUNT(*) FROM inventory_items;'
 ```
 
+If the database predates AI analysis metadata, apply the safe schema patch:
+
+```bash
+pnpm exec tsx scripts/run-migration.ts migrations/0002_analysis_metadata.sql
+```
+
 ---
 
 ### Step 6: Test Deployment (5 minutes)
@@ -103,17 +110,18 @@ psql "$RAILWAY_DATABASE_URL" -c 'SELECT COUNT(*) FROM inventory_items;'
 
 ```bash
 # Get your Railway URL from dashboard (e.g., https://myinventory-ai-production.up.railway.app)
-./scripts/test-railway-deployment.sh https://your-app.up.railway.app
+./scripts/test-railway-deployment.sh https://your-app.up.railway.app '<your-inventory-password>'
 ```
 
 **Expected Output:**
 ```
 ✅ PASS - Health check responding
 ✅ PASS - Frontend loads (HTTP 200)
+✅ PASS - Login works
 ✅ PASS - GET /api/items works
 ✅ PASS - Database connected
 ✅ PASS - HTTPS enabled
-✅ PASS - NODE_ENV set to production
+✅ PASS - OpenAI health endpoint works
 ```
 
 ---
@@ -121,14 +129,15 @@ psql "$RAILWAY_DATABASE_URL" -c 'SELECT COUNT(*) FROM inventory_items;'
 ### Step 7: Manual Testing from Mobile (10 minutes)
 
 1. **Access Railway URL** on your phone: `https://your-app.up.railway.app`
-2. **Test Image Upload:**
+2. **Sign in** with `INVENTORY_PASSWORD`
+3. **Test Image Upload:**
    - Click "Add Item" button
    - Take photo with camera
    - Verify upload succeeds (should show progress indicator)
-3. **Verify AI Analysis:**
+4. **Verify AI Analysis:**
    - Check if item name, category, and estimated value appear
    - If blank: Check Railway logs for OpenAI API errors
-4. **Test Image Persistence:**
+5. **Test Image Persistence:**
    - Note the uploaded image URL (e.g., `/objects/items/abc123.jpg`)
    - Trigger a redeploy in Railway dashboard
    - Verify image still loads after redeploy (persistence test)
@@ -177,7 +186,7 @@ railway run ls -la /app/uploads
 **Common causes:**
 1. Volume not added → Complete Step 4
 2. Wrong mount path → Verify `/app/uploads` in Volume settings
-3. Permissions error → Ensure `NODE_ENV=production` and `USE_LOCAL_STORAGE=true` set
+3. Permissions error → Ensure `NODE_ENV=production` and `LOCAL_STORAGE_DIR=/app/uploads` are set
 
 ---
 

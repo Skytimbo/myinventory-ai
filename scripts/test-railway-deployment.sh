@@ -12,12 +12,17 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 if [ -z "$1" ]; then
-    echo "Usage: ./scripts/test-railway-deployment.sh <railway-url>"
-    echo "Example: ./scripts/test-railway-deployment.sh https://myinventory-ai-production.up.railway.app"
+    echo "Usage: ./scripts/test-railway-deployment.sh <railway-url> [inventory-password]"
+    echo "Example: ./scripts/test-railway-deployment.sh https://myinventory-ai-production.up.railway.app 'your-password'"
     exit 1
 fi
 
 RAILWAY_URL="$1"
+INVENTORY_PASSWORD_ARG="${2:-${INVENTORY_PASSWORD:-}}"
+COOKIE_JAR="$(mktemp)"
+LOGIN_RESPONSE="$(mktemp)"
+
+trap 'rm -f "$COOKIE_JAR" "$LOGIN_RESPONSE"' EXIT
 
 echo "🧪 Testing Railway Deployment"
 echo "==============================="
@@ -50,11 +55,45 @@ fi
 echo ""
 
 # Test 3: API Endpoints
-echo "Test 3: API Endpoints"
+echo "Test 3: Authentication"
+echo "------------------------------"
+AUTH_STATUS=$(curl -s "$RAILWAY_URL/api/auth/status")
+AUTH_ENABLED=$(echo "$AUTH_STATUS" | jq -r '.authEnabled')
+AUTHENTICATED=$(echo "$AUTH_STATUS" | jq -r '.authenticated')
+
+if [ "$AUTH_ENABLED" = "true" ]; then
+    if [ -z "$INVENTORY_PASSWORD_ARG" ]; then
+        echo -e "${RED}❌ FAIL${NC} - App requires login. Pass password as arg 2 or INVENTORY_PASSWORD env var."
+        exit 1
+    fi
+
+    LOGIN_CODE=$(curl -s -o "$LOGIN_RESPONSE" -w "%{http_code}" \
+        -c "$COOKIE_JAR" \
+        -H "Content-Type: application/json" \
+        -d "$(jq -n --arg password "$INVENTORY_PASSWORD_ARG" '{password: $password}')" \
+        "$RAILWAY_URL/api/auth/login")
+
+    if [ "$LOGIN_CODE" = "200" ]; then
+        echo -e "${GREEN}✅ PASS${NC} - Login works"
+    else
+        echo -e "${RED}❌ FAIL${NC} - Login failed (HTTP $LOGIN_CODE)"
+        echo "   Response: $(cat "$LOGIN_RESPONSE")"
+        exit 1
+    fi
+elif [ "$AUTHENTICATED" = "true" ]; then
+    echo -e "${YELLOW}⚠️  WARN${NC} - Auth is disabled on this deployment"
+else
+    echo -e "${RED}❌ FAIL${NC} - Unexpected auth status: $AUTH_STATUS"
+    exit 1
+fi
+echo ""
+
+# Test 4: Protected API Endpoints
+echo "Test 4: Protected API Endpoints"
 echo "------------------------------"
 
 # Get items (should return empty array initially or existing items)
-GET_ITEMS=$(curl -s "$RAILWAY_URL/api/items")
+GET_ITEMS=$(curl -s -b "$COOKIE_JAR" "$RAILWAY_URL/api/items")
 if echo "$GET_ITEMS" | jq . > /dev/null 2>&1; then
     ITEM_COUNT=$(echo "$GET_ITEMS" | jq '. | length')
     echo -e "${GREEN}✅ PASS${NC} - GET /api/items works ($ITEM_COUNT items)"
@@ -64,8 +103,8 @@ else
 fi
 echo ""
 
-# Test 4: Database Connection
-echo "Test 4: Database Connection"
+# Test 5: Database Connection
+echo "Test 5: Database Connection"
 echo "------------------------------"
 if [ "$ITEM_COUNT" != "null" ]; then
     echo -e "${GREEN}✅ PASS${NC} - Database connected and queried successfully"
@@ -75,8 +114,8 @@ else
 fi
 echo ""
 
-# Test 5: SSL Certificate
-echo "Test 5: SSL Certificate"
+# Test 6: SSL Certificate
+echo "Test 6: SSL Certificate"
 echo "------------------------------"
 if echo "$RAILWAY_URL" | grep -q "https://"; then
     if curl -sSI "$RAILWAY_URL" | grep -q "HTTP.*200\|HTTP.*301\|HTTP.*302"; then
@@ -89,14 +128,19 @@ else
 fi
 echo ""
 
-# Test 6: Environment Variables
-echo "Test 6: Environment Configuration"
+# Test 7: OpenAI Configuration
+echo "Test 7: OpenAI Configuration"
 echo "------------------------------"
-HEALTH_ENV=$(curl -s "$RAILWAY_URL/api/health" | jq -r '.environment')
-if [ "$HEALTH_ENV" = "production" ]; then
-    echo -e "${GREEN}✅ PASS${NC} - NODE_ENV set to production"
+OPENAI_HEALTH=$(curl -s -b "$COOKIE_JAR" "$RAILWAY_URL/api/health/openai")
+PROJECT_STATUS=$(echo "$OPENAI_HEALTH" | jq -r '.project_validation_status // empty')
+API_KEY_EXISTS=$(echo "$OPENAI_HEALTH" | jq -r '.OPENAI_API_KEY_exists // empty')
+
+if [ "$PROJECT_STATUS" = "ok" ] || [ "$API_KEY_EXISTS" = "true" ]; then
+    echo -e "${GREEN}✅ PASS${NC} - OpenAI health endpoint works"
+    echo "   Response: $OPENAI_HEALTH"
 else
-    echo -e "${YELLOW}⚠️  WARN${NC} - NODE_ENV is '$HEALTH_ENV' (expected 'production')"
+    echo -e "${YELLOW}⚠️  WARN${NC} - OpenAI health endpoint returned unexpected response"
+    echo "   Response: $OPENAI_HEALTH"
 fi
 echo ""
 

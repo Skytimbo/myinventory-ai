@@ -36,8 +36,19 @@ CREATE TABLE IF NOT EXISTS inventory_items (
   value_confidence TEXT,
   value_rationale TEXT,
   location TEXT,
+  analysis_metadata JSONB,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Safe to run on existing databases that predate analysis metadata
+ALTER TABLE inventory_items
+  ADD COLUMN IF NOT EXISTS analysis_metadata JSONB;
+```
+
+Or from the repo root:
+
+```bash
+pnpm exec tsx scripts/run-migration.ts migrations/0002_analysis_metadata.sql
 ```
 
 ### Step 3: Verify Table Creation
@@ -52,7 +63,7 @@ WHERE table_name = 'inventory_items'
 ORDER BY ordinal_position;
 ```
 
-**Expected Result:** 12 rows showing all columns (id, name, description, etc.)
+**Expected Result:** 13 rows showing all columns (id, name, description, etc.)
 
 ---
 
@@ -85,7 +96,7 @@ Railway will automatically detect the git push and redeploy. No action needed.
 - [ ] Wait 2-3 minutes for Railway to rebuild
 - [ ] Check Railway logs for: `✓ Database connection verified`
 - [ ] Test health endpoint: `https://your-app.railway.app/api/health`
-  - **Expected:** `{"status":"ok","timestamp":"...","environment":"production"}`
+  - **Expected:** `{"ok":true}`
 
 ### ✅ Photo Upload Test
 
@@ -156,10 +167,10 @@ LIMIT 5;
 2. OPENAI_API_KEY is missing/invalid
    - **Fix:** Set in Railway dashboard → Variables
    - If using project-scoped keys (`sk-proj-*`), also set `OPENAI_PROJECT_ID`
-   - Verify with: `https://your-app.railway.app/api/health/openai`
+   - Verify after login with: `https://your-app.railway.app/api/health/openai`
 
 3. DATABASE_URL is incorrect
-   - **Fix:** Should be: `postgresql://neondb_owner:npg_bRvYc0f2KjTw@ep-still-cloud-ah7zvayl-pooler.c-3.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require`
+   - **Fix:** Use the current connection string copied from Neon or Railway variables
 
 4. Persistent volume not mounted
    - **Fix:** In Railway dashboard, add volume at `/app/uploads` (5GB)
@@ -184,6 +195,7 @@ LIMIT 5;
 | value_confidence | TEXT | YES | NULL | Confidence: "low", "medium", "high" |
 | value_rationale | TEXT | YES | NULL | Brief valuation explanation |
 | location | TEXT | YES | NULL | Physical storage location |
+| analysis_metadata | JSONB | YES | NULL | AI analysis provenance and diagnostics |
 | created_at | TEXT | NO | CURRENT_TIMESTAMP | Creation timestamp |
 
 ### Indexes
