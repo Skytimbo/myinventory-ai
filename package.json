@@ -22,6 +22,8 @@
     "db:push": "drizzle-kit push",
     "db:reset": "tsx scripts/db-reset.ts",
     "db:seed": "tsx scripts/db-seed.ts",
+    "backup": "tsx scripts/backup.ts",
+    "restore:verify": "tsx scripts/restore-verify.ts",
     "test": "pnpm test:server && pnpm test:client",
     "test:server": "vitest run --config server/vitest.config.ts",
     "test:client": "vitest run --config vite.config.ts",

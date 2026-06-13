@@ -10,6 +10,7 @@ uploads/
 codebase-index.json
 playwright-report/
 test-results/
+backups/
 
 # Foreign package manager lockfiles
 package-lock.json
