@@ -19,6 +19,14 @@ import { wrap, ApiError } from "./errors";
 import { validateUploadedFile } from "./fileValidation";
 import { openAIHealthCheck } from "./analyzer";
 import { getOpenAIEnvHealth } from "./health/openaiHealth";
+import {
+  collectImageReferences,
+  createBackupArchivePlan,
+  writeBackupArchive,
+  type BackupImageFile,
+} from "./backupArchive";
+import type { InventoryItem } from "@shared/schema";
+import type { BackupInventoryItem } from "../scripts/backup-utils";
 
 declare module "express-session" {
   interface SessionData {
@@ -48,6 +56,12 @@ export async function registerRoutes(
     max: 30,
     code: "AI_RATE_LIMITED",
     message: "Too many AI requests. Try again later.",
+  });
+  const backupRateLimit = createRateLimiter({
+    windowMs: 60 * 60 * 1000,
+    max: 10,
+    code: "BACKUP_RATE_LIMITED",
+    message: "Too many backup requests. Try again later.",
   });
 
   // ============================================================
@@ -122,6 +136,44 @@ export async function registerRoutes(
   });
 
   app.use("/api", auth.requireAuth);
+
+  // ============================================================
+  // Backup Endpoint
+  // ============================================================
+
+  app.get(
+    "/api/backup",
+    backupRateLimit,
+    wrap(async (req, res) => {
+      const items = (await itemService.getItems()).map(toBackupInventoryItem);
+      const imageFiles = await resolveLocalBackupImageFiles(items, objectStorage);
+      const createdAt = new Date().toISOString();
+      const plan = await createBackupArchivePlan({
+        items,
+        imageFiles,
+        sourceAppUrl: getRequestAppUrl(req),
+        createdAt,
+      });
+
+      res.set({
+        "Content-Type": "application/gzip",
+        "Content-Disposition": `attachment; filename="${plan.archiveName}"`,
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+      });
+
+      try {
+        await writeBackupArchive(plan, res);
+      } catch (error) {
+        if (res.headersSent) {
+          console.error("Backup stream error:", error);
+          res.destroy(error instanceof Error ? error : undefined);
+          return;
+        }
+        throw error;
+      }
+    })
+  );
 
   // ============================================================
   // Item CRUD Endpoints
@@ -399,4 +451,63 @@ function normalizeFiles(
   }
 
   return [];
+}
+
+function toBackupInventoryItem(item: InventoryItem): BackupInventoryItem {
+  return {
+    id: item.id,
+    name: item.name,
+    description: item.description,
+    category: item.category,
+    tags: Array.isArray(item.tags) ? item.tags : [],
+    imageUrl: item.imageUrl,
+    imageUrls: Array.isArray(item.imageUrls) ? item.imageUrls : null,
+    barcodeData: item.barcodeData,
+    estimatedValue: item.estimatedValue ?? null,
+    valueConfidence: item.valueConfidence ?? null,
+    valueRationale: item.valueRationale ?? null,
+    location: item.location ?? null,
+    analysisMetadata: item.analysisMetadata ?? null,
+    createdAt: item.createdAt,
+  };
+}
+
+async function resolveLocalBackupImageFiles(
+  items: BackupInventoryItem[],
+  objectStorage: AppServices["objectStorage"]
+): Promise<BackupImageFile[]> {
+  const imageFiles: BackupImageFile[] = [];
+  const missingImageReferences: string[] = [];
+
+  for (const reference of collectImageReferences(items)) {
+    try {
+      const filePath = await objectStorage.getLocalObjectFile(reference.objectPath);
+      imageFiles.push({
+        objectPath: reference.objectPath,
+        filePath,
+        itemIds: Array.from(reference.itemIds).sort(),
+      });
+    } catch {
+      missingImageReferences.push(reference.objectPath);
+    }
+  }
+
+  if (missingImageReferences.length > 0) {
+    throw new ApiError(
+      500,
+      "BACKUP_INCOMPLETE",
+      `Backup cannot be created because referenced image file(s) are missing: ${missingImageReferences.join(", ")}`
+    );
+  }
+
+  return imageFiles;
+}
+
+function getRequestAppUrl(req: Request): string {
+  if (process.env.APP_URL) {
+    return process.env.APP_URL.replace(/\/$/, "");
+  }
+
+  const host = req.get("host") || "localhost";
+  return `${req.protocol}://${host}`;
 }

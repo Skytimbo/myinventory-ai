@@ -88,7 +88,7 @@ export function sha256Buffer(buffer: Buffer): string {
 
 export function getImageObjectPaths(item: BackupInventoryItem): string[] {
   const paths = item.imageUrls?.length ? item.imageUrls : [item.imageUrl];
-  return [...new Set(paths.filter(Boolean))];
+  return Array.from(new Set(paths.filter(Boolean)));
 }
 
 export function objectPathToArchivePath(objectPath: string): string {
@@ -151,10 +151,6 @@ export function inventoryItemsToCsv(items: BackupInventoryItem[]): string {
     headers.map(csvEscape).join(","),
     ...rows.map((row) => row.map(csvEscape).join(",")),
   ].join("\n");
-}
-
-export async function createTarGz(sourceDir: string, archivePath: string): Promise<void> {
-  await runTar(["-czf", archivePath, "-C", sourceDir, "."]);
 }
 
 export async function extractTarGz(archivePath: string, destinationDir: string): Promise<void> {

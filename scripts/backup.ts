@@ -1,32 +1,24 @@
 import "dotenv/config";
 
+import { createWriteStream } from "fs";
 import { promises as fs } from "fs";
 import os from "os";
 import path from "path";
 import { getPgPoolFromUrl } from "./_db";
 import {
-  BACKUP_FORMAT_VERSION,
-  BACKUP_SCHEMA_VERSION,
-  PROJECT_NAME,
   archivePathToFilesystemPath,
-  createTarGz,
-  getImageObjectPaths,
-  inventoryItemsToCsv,
   normalizeAppUrl,
   objectPathToArchivePath,
   requireEnv,
-  sha256Buffer,
-  writeJsonFile,
-  type BackupImageManifestEntry,
   type BackupInventoryItem,
-  type BackupManifest,
-  type InventoryBackupPayload,
 } from "./backup-utils";
-
-interface ImageReference {
-  objectPath: string;
-  itemIds: Set<string>;
-}
+import {
+  collectImageReferences,
+  createBackupArchivePlan,
+  writeBackupArchive,
+  type BackupImageFile,
+  type BackupImageReference,
+} from "../server/backupArchive";
 
 async function main() {
   const databaseUrl = requireEnv("DATABASE_URL");
@@ -34,8 +26,6 @@ async function main() {
   const inventoryPassword = requireEnv("INVENTORY_PASSWORD");
   const backupDir = path.resolve(process.cwd(), process.env.BACKUP_DIR || "backups");
   const createdAt = new Date().toISOString();
-  const archiveName = `myinventory-backup-${createdAt.replace(/[:.]/g, "-")}.tar.gz`;
-  const archivePath = path.join(backupDir, archiveName);
   const stagingDir = await fs.mkdtemp(path.join(os.tmpdir(), "myinventory-backup-"));
 
   try {
@@ -49,61 +39,24 @@ async function main() {
     );
 
     const cookie = await login(appUrl, inventoryPassword);
-    const imageManifest = await downloadImages({
+    const imageFiles = await downloadImages({
       appUrl,
       cookie,
       imageReferences,
       stagingDir,
     });
 
-    const missingImageReferences = imageReferences
-      .filter((reference) => !imageManifest.some((image) => image.objectPath === reference.objectPath))
-      .map((reference) => reference.objectPath);
-
-    if (missingImageReferences.length > 0) {
-      throw new Error(
-        `Backup completeness audit failed. Missing image reference(s): ${missingImageReferences.join(", ")}`
-      );
-    }
-
-    const inventoryPayload: InventoryBackupPayload = {
-      formatVersion: BACKUP_FORMAT_VERSION,
-      schemaVersion: BACKUP_SCHEMA_VERSION,
-      exportedAt: createdAt,
+    const plan = await createBackupArchivePlan({
       items,
-    };
-
-    const manifest: BackupManifest = {
-      backupFormatVersion: BACKUP_FORMAT_VERSION,
-      project: PROJECT_NAME,
-      schemaVersion: BACKUP_SCHEMA_VERSION,
-      createdAt,
+      imageFiles,
       sourceAppUrl: appUrl,
-      itemCount: items.length,
-      dbImageReferenceCount: countDbImageReferences(items),
-      uniqueImageReferenceCount: imageReferences.length,
-      downloadedImageCount: imageManifest.length,
-      missingImageReferences,
-      orphanFileAudit: {
-        status: "not_checked",
-        reason:
-          "Backup v1 downloads images referenced by database rows over /objects/*. It does not list the Railway volume, so unreferenced volume files are outside this audit.",
-      },
-      images: imageManifest,
-    };
-
-    await writeJsonFile(path.join(stagingDir, "inventory.json"), inventoryPayload);
-    await fs.writeFile(
-      path.join(stagingDir, "inventory.csv"),
-      `${inventoryItemsToCsv(items)}\n`,
-      "utf8"
-    );
-    await writeJsonFile(path.join(stagingDir, "manifest.json"), manifest);
-
-    await createTarGz(stagingDir, archivePath);
+      createdAt,
+    });
+    const archivePath = path.join(backupDir, plan.archiveName);
+    await writeBackupArchive(plan, createWriteStream(archivePath));
     console.log(`Backup complete: ${archivePath}`);
     console.log(
-      `Archived ${manifest.itemCount} item(s) and ${manifest.downloadedImageCount} image file(s).`
+      `Archived ${plan.manifest.itemCount} item(s) and ${plan.manifest.downloadedImageCount} image file(s).`
     );
   } finally {
     await fs.rm(stagingDir, { recursive: true, force: true });
@@ -151,28 +104,6 @@ async function loadInventoryItems(databaseUrl: string): Promise<BackupInventoryI
   }
 }
 
-function collectImageReferences(items: BackupInventoryItem[]): ImageReference[] {
-  const references = new Map<string, Set<string>>();
-
-  for (const item of items) {
-    for (const objectPath of getImageObjectPaths(item)) {
-      if (!references.has(objectPath)) {
-        references.set(objectPath, new Set());
-      }
-      references.get(objectPath)?.add(item.id);
-    }
-  }
-
-  return [...references.entries()].map(([objectPath, itemIds]) => ({
-    objectPath,
-    itemIds,
-  }));
-}
-
-function countDbImageReferences(items: BackupInventoryItem[]): number {
-  return items.reduce((count, item) => count + getImageObjectPaths(item).length, 0);
-}
-
 async function login(appUrl: string, password: string): Promise<string> {
   const loginUrl = new URL("/api/auth/login", appUrl);
   const response = await fetch(loginUrl, {
@@ -201,10 +132,10 @@ async function downloadImages({
 }: {
   appUrl: string;
   cookie: string;
-  imageReferences: ImageReference[];
+  imageReferences: BackupImageReference[];
   stagingDir: string;
-}): Promise<BackupImageManifestEntry[]> {
-  const imageManifest: BackupImageManifestEntry[] = [];
+}): Promise<BackupImageFile[]> {
+  const imageFiles: BackupImageFile[] = [];
 
   for (const reference of imageReferences) {
     const imageUrl = new URL(reference.objectPath, appUrl);
@@ -231,16 +162,14 @@ async function downloadImages({
     await fs.mkdir(path.dirname(destination), { recursive: true });
     await fs.writeFile(destination, buffer);
 
-    imageManifest.push({
+    imageFiles.push({
       objectPath: reference.objectPath,
-      archivePath,
-      sha256: sha256Buffer(buffer),
-      bytes: buffer.length,
-      itemIds: [...reference.itemIds].sort(),
+      filePath: destination,
+      itemIds: Array.from(reference.itemIds).sort(),
     });
   }
 
-  return imageManifest;
+  return imageFiles;
 }
 
 main().catch((error: unknown) => {

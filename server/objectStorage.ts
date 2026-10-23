@@ -34,6 +34,9 @@ export interface IObjectStorage {
 
   /** Stream a file to an HTTP response */
   download(objectPath: string, res: Response): Promise<void>;
+
+  /** Resolve a virtual object path to a canonical local filesystem path */
+  getLocalObjectFile(objectPath: string): Promise<string>;
 }
 
 /**

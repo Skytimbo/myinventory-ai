@@ -8,7 +8,7 @@ import { SearchFilter } from "@/components/SearchFilter";
 import { BarcodeModal } from "@/components/BarcodeModal";
 import { ExportModal } from "@/components/ExportModal";
 import { Button } from "@/components/ui/button";
-import { Upload, Download, Loader2, Camera, Package, Zap, LogOut } from "lucide-react";
+import { Upload, Download, Loader2, Camera, Package, Zap, LogOut, Archive } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -18,6 +18,7 @@ export default function Home() {
   const [showCapture, setShowCapture] = useState(false);
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [showExportModal, setShowExportModal] = useState(false);
+  const [isBackupDownloading, setIsBackupDownloading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [quickCapture, setQuickCapture] = useState(() => {
     // Persist preference in localStorage
@@ -143,6 +144,44 @@ export default function Home() {
 
     createItemMutation.mutate(formData);
   };
+
+  const handleDownloadBackup = useCallback(async () => {
+    setIsBackupDownloading(true);
+
+    try {
+      const response = await fetch("/api/backup", {
+        method: "GET",
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        throw new Error(await readBackupError(response));
+      }
+
+      const blob = await response.blob();
+      const downloadUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.download = getBackupFilename(response);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(downloadUrl);
+
+      toast({
+        title: "Backup Downloaded",
+        description: "Save this backup to iCloud Drive, Time Machine, or another backed-up location.",
+      });
+    } catch (error) {
+      toast({
+        title: "Backup Failed",
+        description: error instanceof Error ? error.message : "Unable to create backup.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsBackupDownloading(false);
+    }
+  }, [toast]);
 
   const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const fileList = event.target.files;
@@ -352,22 +391,42 @@ export default function Home() {
         <Dashboard items={items} />
 
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
             <h2 className="text-2xl md:text-3xl font-semibold">
               Inventory
               <span className="text-muted-foreground ml-2 text-xl" data-testid="text-filtered-count">
                 ({filteredItems.length})
               </span>
             </h2>
-            <Button
-              variant="outline"
-              onClick={() => setShowExportModal(true)}
-              disabled={items.length === 0}
-              data-testid="button-open-export"
-            >
-              <Download className="w-4 h-4 mr-2" />
-              Export
-            </Button>
+            <div className="flex flex-col gap-2 md:items-end">
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="secondary"
+                  onClick={handleDownloadBackup}
+                  disabled={items.length === 0 || isBackupDownloading}
+                  data-testid="button-download-backup"
+                >
+                  {isBackupDownloading ? (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                    <Archive className="w-4 h-4 mr-2" />
+                  )}
+                  Download Backup
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => setShowExportModal(true)}
+                  disabled={items.length === 0}
+                  data-testid="button-open-export"
+                >
+                  <Download className="w-4 h-4 mr-2" />
+                  Export CSV/PDF
+                </Button>
+              </div>
+              <p className="max-w-md text-xs text-muted-foreground md:text-right">
+                Export is human-readable only. Backup is the full recoverable archive with images. Save this backup to iCloud Drive, Time Machine, or another backed-up location.
+              </p>
+            </div>
           </div>
 
           <SearchFilter
@@ -446,4 +505,27 @@ export default function Home() {
       />
     </div>
   );
+}
+
+async function readBackupError(response: Response): Promise<string> {
+  try {
+    const body = await response.json();
+    if (typeof body?.error === "string") {
+      return body.error;
+    }
+  } catch {
+    // Fall through to a generic message.
+  }
+
+  return `Backup failed with HTTP ${response.status}`;
+}
+
+function getBackupFilename(response: Response): string {
+  const disposition = response.headers.get("Content-Disposition") || "";
+  const match = disposition.match(/filename="([^"]+)"/i);
+  if (match?.[1]) {
+    return match[1];
+  }
+
+  return `myinventory-backup-${new Date().toISOString().replace(/[:.]/g, "-")}.tar.gz`;
 }

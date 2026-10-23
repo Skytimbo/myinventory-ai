@@ -1,10 +1,23 @@
 # Backup and Restore
 
-MyInventory AI backup v1 is a manual disaster-recovery workflow. It is not the same as the in-app CSV/PDF export: backup v1 creates a local archive with lossless inventory JSON and the actual image files needed to reconstruct the inventory.
+MyInventory AI backup v1 is a manual disaster-recovery workflow. It is not the same as the CSV/PDF export: a backup is an archive with lossless inventory JSON and the actual image files needed to reconstruct the inventory.
 
-Run backups from your laptop, not inside Railway. A Railway-side archive still lives on the app box or mounted volume; a laptop-run backup pulls records from Neon and images from the authenticated deployed app, then writes the archive off-box.
+There are two ways to create the same archive format. Both produce an archive that `pnpm restore:verify` accepts. Either way, the archive is written off-box (your browser's download folder or your laptop), not left on Railway.
 
-## Backup
+## In-App Backup
+
+Sign in and click **Download Backup** on the home page. The browser downloads `myinventory-backup-<timestamp>.tar.gz`.
+
+- The download is served by `GET /api/backup`, which requires a signed-in session. Signed-out requests get `401`.
+- The server reads records through the app's normal database connection and images directly from the uploads volume. No credentials are written into the archive.
+- If any database-referenced image is missing from the volume, the server returns a JSON error (`BACKUP_INCOMPLETE`) listing the missing paths and no archive is downloaded.
+- If an image changes while the archive is streaming, or the connection drops, the download is aborted rather than finishing with an archive that does not match its manifest. Retry the download.
+- Requests are rate limited to 10 per hour per client (`BACKUP_RATE_LIMITED`).
+- The browser holds the whole archive in memory before saving it. For very large image libraries, prefer the script below.
+
+## Script Backup
+
+Run script backups from your laptop, not inside Railway. The script pulls records from Neon and images from the authenticated deployed app, then writes the archive off-box.
 
 Required environment variables:
 
@@ -37,7 +50,7 @@ Archive contents:
 - `manifest.json`: backup metadata, schema version, counts, image hashes, and completeness audit results.
 - `inventory.json`: lossless source of truth for restore verification.
 - `inventory.csv`: human-readable convenience export. Do not use this for restore.
-- `images/`: image files downloaded from authenticated `/objects/*` URLs.
+- `images/`: image files referenced by the database (downloaded from authenticated `/objects/*` URLs by the script, or read from the uploads volume by the in-app backup).
 
 The backup fails if any database image reference cannot be downloaded. Backup v1 audits database-referenced images only; it does not list the Railway volume, so unreferenced orphan files on the volume are outside this check.
 
@@ -76,6 +89,8 @@ What verification does:
 - checks restored item count;
 - rolls back the transaction so the test database is not left changed.
 
+The archive-level checks (everything except the database insert) live in `scripts/restore-verify-archive.ts`. The server test suite runs them against archives built from synthetic data, including archives downloaded from `GET /api/backup`, so format regressions are caught without a database.
+
 If `analysisMetadata.imageHash` mismatches but manifest hashes match, the archive is internally consistent and the mismatch may mean the production `/objects/*` endpoint served transformed bytes instead of canonical upload bytes. Investigate before trusting the backup for real recovery.
 
 ## Production Restore Runbook
@@ -99,6 +114,6 @@ This runbook is intentionally manual for v1. Practice it against a disposable Ra
 
 ## Limitations
 
-- Backup v1 is manual. It only protects changes made before the last time you ran it.
+- Backup v1 is manual. It only protects changes made before the last time you ran it or downloaded it in-app.
 - Backup v1 does not enumerate Railway volume orphan files that are not referenced by the database.
 - Backup v1 does not upload archives to cloud storage. Copy archives to a backed-up destination after creation.

@@ -13,6 +13,7 @@
 
 import path from "path";
 import { randomUUID } from "crypto";
+import { promises as fs } from "fs";
 import type { Response } from "express";
 import type { IStorage } from "./storage";
 import type { IObjectStorage } from "./objectStorage";
@@ -309,6 +310,13 @@ export class FakeObjectStorageService implements IObjectStorage {
     return this.storageDir;
   }
 
+  /**
+   * Test helper: Set where getLocalObjectFile() materializes files on disk
+   */
+  setLocalStorageDir(dir: string): void {
+    this.storageDir = dir;
+  }
+
   validateObjectPath(objectPath: string): boolean {
     // Must start with /objects/
     if (!objectPath.startsWith("/objects/")) {
@@ -410,12 +418,18 @@ export class FakeObjectStorageService implements IObjectStorage {
 
     const entityId = parts.slice(1).join("/");
 
-    if (!this.files.has(entityId)) {
+    const buffer = this.files.get(entityId);
+    if (!buffer) {
       const { ObjectNotFoundError } = await import("./objectStorage");
       throw new ObjectNotFoundError();
     }
 
-    return `${this.storageDir}/${entityId}`;
+    // Callers expect a real file, so write the in-memory bytes to disk on demand
+    const filePath = path.join(this.storageDir, entityId);
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, buffer);
+
+    return filePath;
   }
 
   async downloadLocalObject(
