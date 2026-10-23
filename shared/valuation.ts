@@ -165,3 +165,66 @@ function parseAmount(value: string | null | undefined): number | null {
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
+
+/** "$1,234.50" for a decimal string; null when not a number */
+export function formatUsd(amount: string | null | undefined): string | null {
+  const value = parseAmount(amount);
+  if (value === null) {
+    return null;
+  }
+  return value.toLocaleString("en-US", { style: "currency", currency: "USD" });
+}
+
+export const VALUE_STATUS_LABELS: Record<ValueStatus, string> = {
+  not_evaluated: "Not evaluated",
+  estimated: "Estimated",
+  nonmarketable: "No resale market",
+  insufficient_information: "Value can't be established",
+};
+
+/** One-line, human-readable description used by exports */
+export function describeValuation(view: ValuationView): string {
+  const valuation = view.valuation;
+  let text = VALUE_STATUS_LABELS[view.status];
+
+  if (valuation && view.status === "estimated") {
+    // Plain hyphen: jsPDF's standard fonts do not reliably render an en dash
+    text = `${formatUsd(valuation.low)} - ${formatUsd(valuation.high)} (likely ${formatUsd(
+      valuation.likely
+    )}, ${valuation.confidence ?? "low"} confidence, AI judgment)`;
+  } else if (valuation && view.status === "insufficient_information" && valuation.missingInformation.length) {
+    text += ` (needs: ${valuation.missingInformation.join(", ")})`;
+  }
+
+  if (view.isStale) {
+    text += " [stale: item re-identified since]";
+  }
+  if (view.legacy && !view.legacy.isPlaceholder) {
+    text += ` | Legacy estimate ${formatUsd(view.legacy.amount)} (old combined analysis, unverified)`;
+  }
+  return text;
+}
+
+export const VALUATION_CSV_HEADERS = [
+  "Value Status",
+  "Estimate Low",
+  "Estimate Likely",
+  "Estimate High",
+  "Estimate Stale",
+  "Evidence Basis",
+  "Legacy Estimate",
+];
+
+/** CSV cells matching VALUATION_CSV_HEADERS; unknown values are blank, never 0 */
+export function valuationCsvCells(item: ValuationFields): string[] {
+  const view = getValuationView(item);
+  return [
+    view.status,
+    view.valuation?.low ?? "",
+    view.valuation?.likely ?? "",
+    view.valuation?.high ?? "",
+    view.isStale ? "yes" : "",
+    view.valuation?.evidence.basis ?? "",
+    view.legacy?.amount ?? "",
+  ];
+}

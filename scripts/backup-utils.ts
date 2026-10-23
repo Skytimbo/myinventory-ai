@@ -3,7 +3,7 @@ import { createHash } from "crypto";
 import { promises as fs } from "fs";
 import path from "path";
 import type { Identification, Valuation } from "../shared/schema";
-import { getValuationView } from "../shared/valuation";
+import { VALUATION_CSV_HEADERS, valuationCsvCells } from "../shared/valuation";
 
 export const BACKUP_FORMAT_VERSION = 1;
 export const BACKUP_SCHEMA_VERSION = "0003_identify_valuation";
@@ -144,34 +144,19 @@ export function inventoryItemsToCsv(items: BackupInventoryItem[]): string {
     "Description",
     "Category",
     "Tags",
-    "Value Status",
-    "Estimate Low",
-    "Estimate Likely",
-    "Estimate High",
-    "Estimate Stale",
-    "Evidence Basis",
-    "Legacy Estimate",
+    ...VALUATION_CSV_HEADERS,
     "Barcode",
     "Created At",
   ];
-  const rows = items.map((item) => {
-    const view = getValuationView(item);
-    return [
-      item.name,
-      item.description,
-      item.category,
-      item.tags.join("; "),
-      view.status,
-      view.valuation?.low ?? "",
-      view.valuation?.likely ?? "",
-      view.valuation?.high ?? "",
-      view.isStale ? "yes" : "",
-      view.valuation?.evidence.basis ?? "",
-      view.legacy?.amount ?? "",
-      item.barcodeData,
-      item.createdAt,
-    ];
-  });
+  const rows = items.map((item) => [
+    item.name,
+    item.description,
+    item.category,
+    item.tags.join("; "),
+    ...valuationCsvCells(item),
+    item.barcodeData,
+    item.createdAt,
+  ]);
 
   return [
     headers.map(csvEscape).join(","),

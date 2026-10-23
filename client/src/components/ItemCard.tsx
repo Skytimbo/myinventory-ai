@@ -3,24 +3,41 @@ import { InventoryItem } from "@shared/schema";
 import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Trash2, Maximize2, TrendingUp, TrendingDown, Minus, ImageIcon, MapPin, Images, Sparkles, Loader2 } from "lucide-react";
+import { Trash2, Maximize2, ImageIcon, MapPin, Images, Sparkles, Loader2, CircleDollarSign } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { getIdentificationStatus } from "@shared/valuation";
+import { ValueSummary } from "@/components/ValueSummary";
 import JsBarcode from "jsbarcode";
 
 interface ItemCardProps {
   item: InventoryItem;
   onDelete: (id: string) => void;
   onViewBarcode: (item: InventoryItem) => void;
-  onAnalyze?: (id: string) => void;
-  isAnalyzing?: boolean;
+  onIdentify?: (id: string) => void;
+  onEstimateValue?: (id: string) => void;
+  isIdentifying?: boolean;
+  isEstimating?: boolean;
 }
 
-export function ItemCard({ item, onDelete, onViewBarcode, onAnalyze, isAnalyzing }: ItemCardProps) {
+export function ItemCard({
+  item,
+  onDelete,
+  onViewBarcode,
+  onIdentify,
+  onEstimateValue,
+  isIdentifying,
+  isEstimating,
+}: ItemCardProps) {
   const barcodeRef = useRef<HTMLCanvasElement>(null);
   const descriptionRef = useRef<HTMLParagraphElement>(null);
   const [barcodeGenerated, setBarcodeGenerated] = useState(false);
@@ -32,6 +49,21 @@ export function ItemCard({ item, onDelete, onViewBarcode, onAnalyze, isAnalyzing
 
   // Description expansion state
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
+  const [confirmReidentify, setConfirmReidentify] = useState(false);
+
+  const identificationStatus = getIdentificationStatus(item);
+  const isUnidentified = identificationStatus === "unidentified";
+  const uncertainty = item.identification?.uncertainty;
+  const aiBusy = Boolean(isIdentifying || isEstimating);
+
+  const handleIdentifyClick = () => {
+    // Re-identifying replaces name, description, category, and tags
+    if (isUnidentified) {
+      onIdentify?.(item.id);
+    } else {
+      setConfirmReidentify(true);
+    }
+  };
   const [isDescriptionTruncated, setIsDescriptionTruncated] = useState(false);
 
   // Dev-only telemetry
@@ -187,11 +219,16 @@ export function ItemCard({ item, onDelete, onViewBarcode, onAnalyze, isAnalyzing
           <Badge variant="secondary" className="text-xs" data-testid={`badge-category-${item.id}`}>
             {item.category}
           </Badge>
-          {/* Unanalyzed badge for Quick Capture items */}
-          {!item.estimatedValue && (
-            <Badge variant="outline" className="text-xs bg-yellow-50 text-yellow-700 border-yellow-300" data-testid={`badge-unanalyzed-${item.id}`}>
+          {/* Quick Capture or failed AI: not identified yet */}
+          {isUnidentified && (
+            <Badge variant="outline" className="text-xs bg-yellow-50 text-yellow-700 border-yellow-300" data-testid={`badge-unidentified-${item.id}`}>
               <Sparkles className="w-3 h-3 mr-1" />
-              Unanalyzed
+              Not identified
+            </Badge>
+          )}
+          {uncertainty && uncertainty !== "low" && (
+            <Badge variant="outline" className="text-xs bg-amber-50 text-amber-800 border-amber-300" data-testid={`badge-id-uncertainty-${item.id}`}>
+              {uncertainty === "high" ? "Uncertain ID" : "Likely ID"}
             </Badge>
           )}
           {item.tags.slice(0, 2).map((tag, index) => (
@@ -201,35 +238,7 @@ export function ItemCard({ item, onDelete, onViewBarcode, onAnalyze, isAnalyzing
           ))}
         </div>
 
-        {/* Only show value when confidence is present (hides legacy "0.00" with null confidence) */}
-        {item.estimatedValue && item.valueConfidence && (
-          <div className="flex items-center gap-2">
-            <p className="text-base font-semibold text-foreground font-mono" data-testid={`text-value-${item.id}`}>
-              ${parseFloat(item.estimatedValue).toFixed(2)}
-            </p>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Badge
-                  variant={
-                    item.valueConfidence === 'high' ? 'default' :
-                    item.valueConfidence === 'low' ? 'outline' :
-                    'secondary'
-                  }
-                  className="text-xs cursor-help"
-                  data-testid={`badge-confidence-${item.id}`}
-                >
-                  {item.valueConfidence === 'high' ? <TrendingUp className="w-3 h-3" /> :
-                   item.valueConfidence === 'low' ? <TrendingDown className="w-3 h-3" /> :
-                   <Minus className="w-3 h-3" />}
-                </Badge>
-              </TooltipTrigger>
-              <TooltipContent className="max-w-xs">
-                <p className="font-semibold mb-1">Confidence: {item.valueConfidence}</p>
-                {item.valueRationale && <p className="text-xs">{item.valueRationale}</p>}
-              </TooltipContent>
-            </Tooltip>
-          </div>
-        )}
+        <ValueSummary item={item} />
 
         <div className="space-y-2">
           <canvas ref={barcodeRef} className="w-full h-12 bg-white rounded" data-testid={`canvas-barcode-${item.id}`} />
@@ -245,23 +254,40 @@ export function ItemCard({ item, onDelete, onViewBarcode, onAnalyze, isAnalyzing
           </Button>
         </div>
       </CardContent>
-      <CardFooter className="p-4 pt-0 flex gap-2">
-        {/* Analyze button for Quick Capture items */}
-        {!item.estimatedValue && onAnalyze && (
+      <CardFooter className="p-4 pt-0 flex flex-wrap gap-2">
+        {onIdentify && (
           <Button
-            variant="default"
+            variant={isUnidentified ? "default" : "outline"}
             size="sm"
-            onClick={() => onAnalyze(item.id)}
-            disabled={isAnalyzing}
-            className="flex-1"
-            data-testid={`button-analyze-${item.id}`}
+            onClick={handleIdentifyClick}
+            disabled={aiBusy}
+            className="flex-1 min-w-[7rem]"
+            data-testid={`button-identify-${item.id}`}
           >
-            {isAnalyzing ? (
+            {isIdentifying ? (
               <Loader2 className="w-4 h-4 mr-1 animate-spin" />
             ) : (
               <Sparkles className="w-4 h-4 mr-1" />
             )}
-            Analyze
+            {isUnidentified ? "Identify" : "Re-identify"}
+          </Button>
+        )}
+        {onEstimateValue && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onEstimateValue(item.id)}
+            disabled={aiBusy || isUnidentified}
+            title={isUnidentified ? "Identify the item first" : undefined}
+            className="flex-1 min-w-[7rem]"
+            data-testid={`button-estimate-${item.id}`}
+          >
+            {isEstimating ? (
+              <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+            ) : (
+              <CircleDollarSign className="w-4 h-4 mr-1" />
+            )}
+            {item.valuation ? "Re-estimate" : "Estimate Value"}
           </Button>
         )}
         <Button
@@ -275,6 +301,28 @@ export function ItemCard({ item, onDelete, onViewBarcode, onAnalyze, isAnalyzing
           Delete
         </Button>
       </CardFooter>
+
+      <AlertDialog open={confirmReidentify} onOpenChange={setConfirmReidentify}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Re-identify this item?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The AI will replace the current name, description, category, and tags.
+              {item.valuation && !item.valuation.staleAt &&
+                " The current value estimate will be kept but marked stale until you re-estimate."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid={`button-cancel-reidentify-${item.id}`}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => onIdentify?.(item.id)}
+              data-testid={`button-confirm-reidentify-${item.id}`}
+            >
+              Re-identify
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }

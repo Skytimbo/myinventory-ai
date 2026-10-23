@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { InventoryItem } from "@shared/schema";
+import { formatUsd, getValuationView } from "@shared/valuation";
 import { CameraCapture } from "@/components/CameraCapture";
 import { Dashboard } from "@/components/Dashboard";
 import { ItemCard } from "@/components/ItemCard";
@@ -102,22 +103,54 @@ export default function Home() {
     },
   });
 
-  const analyzeMutation = useMutation({
+  const identifyMutation = useMutation({
     mutationFn: async (itemId: string) => {
-      const response = await apiRequest("POST", `/api/items/${itemId}/analyze`);
-      return await response.json();
+      const response = await apiRequest("POST", `/api/items/${itemId}/identify`);
+      return (await response.json()) as InventoryItem;
     },
-    onSuccess: () => {
+    onSuccess: (item) => {
       queryClient.invalidateQueries({ queryKey: ["/api/items"] });
+      const uncertainty = item.identification?.uncertainty;
       toast({
-        title: "Analysis Complete",
-        description: "Item has been analyzed and updated with AI insights.",
+        title: "Item Identified",
+        description:
+          uncertainty && uncertainty !== "low"
+            ? `Identified as "${item.name}" with ${uncertainty} uncertainty. See AI details.`
+            : `Identified as "${item.name}".`,
       });
     },
     onError: () => {
       toast({
-        title: "Analysis Failed",
-        description: "Failed to analyze item. Please try again.",
+        title: "Identification Failed",
+        description: "The item was not changed. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const estimateMutation = useMutation({
+    mutationFn: async (itemId: string) => {
+      const response = await apiRequest("POST", `/api/items/${itemId}/estimate-value`);
+      return (await response.json()) as InventoryItem;
+    },
+    onSuccess: (item) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/items"] });
+      const valuation = item.valuation;
+      const description =
+        valuation?.status === "estimated"
+          ? `${formatUsd(valuation.low)}–${formatUsd(valuation.high)} (AI judgment, ${valuation.confidence ?? "low"} confidence).`
+          : valuation?.status === "nonmarketable"
+            ? "No realistic resale market for this item."
+            : "A value can't be established from these photos. See AI details for what would help.";
+      toast({ title: "Value Estimate Updated", description });
+    },
+    onError: (error) => {
+      const notIdentified = error instanceof Error && error.message.startsWith("409");
+      toast({
+        title: "Estimate Failed",
+        description: notIdentified
+          ? "Identify the item before estimating its value."
+          : "Existing data was not changed. Please try again.",
         variant: "destructive",
       });
     },
@@ -254,10 +287,12 @@ export default function Home() {
     [locations, items]
   );
   
-  const maxValue = useMemo(() => 
-    Math.max(...items.map(item => parseFloat(item.estimatedValue || "0")), 1000), 
+  // Only current estimates have a value; unknown, stale, and legacy values are not $0
+  const maxValue = useMemo(() =>
+    Math.max(...items.map(item => getValuationView(item).currentValue ?? 0), 1000),
     [items]
   );
+  const isValueFilterActive = valueRange[0] > 0 || valueRange[1] < maxValue;
 
   const filteredItems = useMemo(() => 
     items.filter(item => {
@@ -270,8 +305,9 @@ export default function Home() {
       const matchesLocation = selectedLocations.length === 0 || 
         (item.location && selectedLocations.includes(item.location));
       
-      const itemValue = parseFloat(item.estimatedValue || "0");
-      const matchesValue = itemValue >= valueRange[0] && itemValue <= valueRange[1];
+      const itemValue = getValuationView(item).currentValue;
+      const matchesValue = !isValueFilterActive ||
+        (itemValue !== null && itemValue >= valueRange[0] && itemValue <= valueRange[1]);
       
       const itemDate = new Date(item.createdAt);
       const matchesDateFrom = !dateRange[0] || itemDate >= dateRange[0];
@@ -284,7 +320,7 @@ export default function Home() {
       
       return matchesSearch && matchesCategory && matchesLocation && matchesValue && matchesDateRange;
     }),
-    [items, searchQuery, selectedCategories, selectedLocations, valueRange, dateRange]
+    [items, searchQuery, selectedCategories, selectedLocations, valueRange, isValueFilterActive, dateRange]
   );
 
   const handleCategoryToggle = useCallback((category: string) => {
@@ -484,8 +520,10 @@ export default function Home() {
                 item={item}
                 onDelete={(id) => deleteItemMutation.mutate(id)}
                 onViewBarcode={setSelectedItem}
-                onAnalyze={(id) => analyzeMutation.mutate(id)}
-                isAnalyzing={analyzeMutation.isPending}
+                onIdentify={(id) => identifyMutation.mutate(id)}
+                onEstimateValue={(id) => estimateMutation.mutate(id)}
+                isIdentifying={identifyMutation.isPending && identifyMutation.variables === item.id}
+                isEstimating={estimateMutation.isPending && estimateMutation.variables === item.id}
               />
             ))}
           </div>

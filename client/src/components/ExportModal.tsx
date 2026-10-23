@@ -1,5 +1,11 @@
 import { useState } from "react";
 import {
+  describeValuation,
+  getValuationView,
+  VALUATION_CSV_HEADERS,
+  valuationCsvCells,
+} from "@shared/valuation";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -27,20 +33,21 @@ export function ExportModal({ items, isOpen, onClose }: ExportModalProps) {
   const { toast } = useToast();
 
   const exportToCSV = () => {
-    const headers = ["Name", "Description", "Category", "Tags", "Estimated Value", "Barcode", "Created At"];
+    // Value columns are shared with the backup CSV; unknown values are blank, never 0
+    const headers = ["Name", "Description", "Category", "Tags", ...VALUATION_CSV_HEADERS, "Barcode", "Created At"];
     const rows = items.map(item => [
       item.name,
       item.description,
       item.category,
       item.tags.join("; "),
-      item.estimatedValue || "",
+      ...valuationCsvCells(item),
       item.barcodeData,
       item.createdAt,
     ]);
 
     const csvContent = [
       headers.join(","),
-      ...rows.map(row => row.map(cell => `"${cell}"`).join(","))
+      ...rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(","))
     ].join("\n");
 
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
@@ -113,10 +120,12 @@ export function ExportModal({ items, isOpen, onClose }: ExportModalProps) {
           pdf.text(`Tags: ${item.tags.join(", ")}`, margin + 2, y);
           y += 5;
         }
-        if (item.estimatedValue) {
-          pdf.text(`Estimated Value: $${item.estimatedValue}`, margin + 2, y);
-          y += 5;
-        }
+        const valueLines = pdf.splitTextToSize(
+          `Value: ${describeValuation(getValuationView(item))}`,
+          maxWidth - 4
+        );
+        pdf.text(valueLines, margin + 2, y);
+        y += 5 * valueLines.length;
         return y;
       };
 
