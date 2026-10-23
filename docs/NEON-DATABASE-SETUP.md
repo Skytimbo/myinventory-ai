@@ -43,13 +43,22 @@ CREATE TABLE IF NOT EXISTS inventory_items (
 -- Safe to run on existing databases that predate analysis metadata
 ALTER TABLE inventory_items
   ADD COLUMN IF NOT EXISTS analysis_metadata JSONB;
+
+-- Safe to run on existing databases that predate Identify / Estimate Value
+ALTER TABLE inventory_items
+  ADD COLUMN IF NOT EXISTS identification JSONB;
+ALTER TABLE inventory_items
+  ADD COLUMN IF NOT EXISTS valuation JSONB;
 ```
 
-Or from the repo root:
+Or from the repo root (the script targets `DATABASE_URL_TEST` if set, otherwise `DATABASE_URL`; check which before running):
 
 ```bash
 pnpm exec tsx scripts/run-migration.ts migrations/0002_analysis_metadata.sql
+pnpm exec tsx scripts/run-migration.ts migrations/0003_identify_valuation.sql
 ```
+
+See `docs/AI-IDENTIFY-VALUATION.md` for the deployment order (migrate before deploying the code).
 
 ### Step 3: Verify Table Creation
 

@@ -48,8 +48,8 @@ backups/myinventory-backup-<timestamp>.tar.gz
 Archive contents:
 
 - `manifest.json`: backup metadata, schema version, counts, image hashes, and completeness audit results.
-- `inventory.json`: lossless source of truth for restore verification.
-- `inventory.csv`: human-readable convenience export. Do not use this for restore.
+- `inventory.json`: lossless source of truth for restore verification, including the `identification` and `valuation` columns (archive schema version `0003_identify_valuation`).
+- `inventory.csv`: human-readable convenience export with value status, estimate range, staleness, evidence basis, and any legacy estimate in separate columns. Do not use this for restore.
 - `images/`: image files referenced by the database (downloaded from authenticated `/objects/*` URLs by the script, or read from the uploads volume by the in-app backup).
 
 The backup fails if any database image reference cannot be downloaded. Backup v1 audits database-referenced images only; it does not list the Railway volume, so unreferenced orphan files on the volume are outside this check.
@@ -89,6 +89,8 @@ What verification does:
 - checks restored item count;
 - rolls back the transaction so the test database is not left changed.
 
+Restore verification accepts `0003_identify_valuation` archives and older `0002_analysis_metadata` archives; the latter restore `identification` and `valuation` as null. `DATABASE_URL_TEST` must have migration 0003 applied.
+
 The archive-level checks (everything except the database insert) live in `scripts/restore-verify-archive.ts`. The server test suite runs them against archives built from synthetic data, including archives downloaded from `GET /api/backup`, so format regressions are caught without a database.
 
 If `analysisMetadata.imageHash` mismatches but manifest hashes match, the archive is internally consistent and the mismatch may mean the production `/objects/*` endpoint served transformed bytes instead of canonical upload bytes. Investigate before trusting the backup for real recovery.
@@ -98,7 +100,7 @@ If `analysisMetadata.imageHash` mismatches but manifest hashes match, the archiv
 This runbook is intentionally manual for v1. Practice it against a disposable Railway/Neon environment before relying on it for a real incident.
 
 1. Provision a fresh Neon/Postgres database.
-2. Apply the current schema and migrations, including `migrations/0002_analysis_metadata.sql`.
+2. Apply the current schema and migrations, including `migrations/0002_analysis_metadata.sql` and `migrations/0003_identify_valuation.sql`.
 3. Extract the backup archive locally:
 
    ```bash
