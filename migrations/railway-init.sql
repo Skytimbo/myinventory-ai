@@ -33,14 +33,16 @@ CREATE TABLE IF NOT EXISTS inventory_items (
   -- Identification
   barcode_data TEXT NOT NULL,
 
-  -- AI-powered value estimation (PRD 0006)
-  estimated_value DECIMAL(10, 2),        -- Resale value estimate
+  -- LEGACY value estimate from the pre-0003 combined analysis (never rewritten)
+  estimated_value DECIMAL(10, 2),        -- Legacy resale value estimate
   value_confidence TEXT,                 -- "low", "medium", or "high"
   value_rationale TEXT,                  -- Brief valuation explanation
 
   -- Optional metadata
   location TEXT,                         -- Physical storage location
   analysis_metadata JSONB,               -- AI analysis provenance and diagnostics
+  identification JSONB,                  -- Identify result (migration 0003)
+  valuation JSONB,                       -- Estimate Value result (migration 0003)
 
   -- Timestamps
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP

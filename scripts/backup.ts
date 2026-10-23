@@ -83,6 +83,8 @@ async function loadInventoryItems(databaseUrl: string): Promise<BackupInventoryI
         value_rationale AS "valueRationale",
         location,
         analysis_metadata AS "analysisMetadata",
+        identification,
+        valuation,
         created_at AS "createdAt"
       FROM inventory_items
       ORDER BY created_at DESC, name ASC
@@ -97,6 +99,8 @@ async function loadInventoryItems(databaseUrl: string): Promise<BackupInventoryI
       valueRationale: item.valueRationale ?? null,
       location: item.location ?? null,
       analysisMetadata: item.analysisMetadata ?? null,
+      identification: item.identification ?? null,
+      valuation: item.valuation ?? null,
     }));
   } finally {
     client.release();

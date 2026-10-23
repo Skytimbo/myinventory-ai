@@ -22,10 +22,10 @@ import { getOpenAIEnvHealth } from "./health/openaiHealth";
 import {
   collectImageReferences,
   createBackupArchivePlan,
+  toBackupInventoryItem,
   writeBackupArchive,
   type BackupImageFile,
 } from "./backupArchive";
-import type { InventoryItem } from "@shared/schema";
 import type { BackupInventoryItem } from "../scripts/backup-utils";
 
 declare module "express-session" {
@@ -451,25 +451,6 @@ function normalizeFiles(
   }
 
   return [];
-}
-
-function toBackupInventoryItem(item: InventoryItem): BackupInventoryItem {
-  return {
-    id: item.id,
-    name: item.name,
-    description: item.description,
-    category: item.category,
-    tags: Array.isArray(item.tags) ? item.tags : [],
-    imageUrl: item.imageUrl,
-    imageUrls: Array.isArray(item.imageUrls) ? item.imageUrls : null,
-    barcodeData: item.barcodeData,
-    estimatedValue: item.estimatedValue ?? null,
-    valueConfidence: item.valueConfidence ?? null,
-    valueRationale: item.valueRationale ?? null,
-    location: item.location ?? null,
-    analysisMetadata: item.analysisMetadata ?? null,
-    createdAt: item.createdAt,
-  };
 }
 
 async function resolveLocalBackupImageFiles(

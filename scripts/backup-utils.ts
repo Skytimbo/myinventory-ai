@@ -2,9 +2,16 @@ import { spawn } from "child_process";
 import { createHash } from "crypto";
 import { promises as fs } from "fs";
 import path from "path";
+import type { Identification, Valuation } from "../shared/schema";
+import { getValuationView } from "../shared/valuation";
 
 export const BACKUP_FORMAT_VERSION = 1;
-export const BACKUP_SCHEMA_VERSION = "0002_analysis_metadata";
+export const BACKUP_SCHEMA_VERSION = "0003_identify_valuation";
+/** Archive schema versions restore verification accepts. Older ones lack newer columns. */
+export const SUPPORTED_BACKUP_SCHEMA_VERSIONS: readonly string[] = [
+  "0002_analysis_metadata",
+  BACKUP_SCHEMA_VERSION,
+];
 export const PROJECT_NAME = "myinventory-ai";
 
 export interface BackupAnalysisMetadata {
@@ -30,12 +37,16 @@ export interface BackupInventoryItem {
   valueRationale: string | null;
   location: string | null;
   analysisMetadata: BackupAnalysisMetadata | null;
+  /** Absent in 0002 archives */
+  identification: Identification | null;
+  /** Absent in 0002 archives */
+  valuation: Valuation | null;
   createdAt: string;
 }
 
 export interface InventoryBackupPayload {
   formatVersion: typeof BACKUP_FORMAT_VERSION;
-  schemaVersion: typeof BACKUP_SCHEMA_VERSION;
+  schemaVersion: string;
   exportedAt: string;
   items: BackupInventoryItem[];
 }
@@ -51,7 +62,7 @@ export interface BackupImageManifestEntry {
 export interface BackupManifest {
   backupFormatVersion: typeof BACKUP_FORMAT_VERSION;
   project: typeof PROJECT_NAME;
-  schemaVersion: typeof BACKUP_SCHEMA_VERSION;
+  schemaVersion: string;
   createdAt: string;
   sourceAppUrl: string;
   itemCount: number;
@@ -133,19 +144,34 @@ export function inventoryItemsToCsv(items: BackupInventoryItem[]): string {
     "Description",
     "Category",
     "Tags",
-    "Estimated Value",
+    "Value Status",
+    "Estimate Low",
+    "Estimate Likely",
+    "Estimate High",
+    "Estimate Stale",
+    "Evidence Basis",
+    "Legacy Estimate",
     "Barcode",
     "Created At",
   ];
-  const rows = items.map((item) => [
-    item.name,
-    item.description,
-    item.category,
-    item.tags.join("; "),
-    item.estimatedValue || "",
-    item.barcodeData,
-    item.createdAt,
-  ]);
+  const rows = items.map((item) => {
+    const view = getValuationView(item);
+    return [
+      item.name,
+      item.description,
+      item.category,
+      item.tags.join("; "),
+      view.status,
+      view.valuation?.low ?? "",
+      view.valuation?.likely ?? "",
+      view.valuation?.high ?? "",
+      view.isStale ? "yes" : "",
+      view.valuation?.evidence.basis ?? "",
+      view.legacy?.amount ?? "",
+      item.barcodeData,
+      item.createdAt,
+    ];
+  });
 
   return [
     headers.map(csvEscape).join(","),

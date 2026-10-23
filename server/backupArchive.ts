@@ -15,6 +15,7 @@ import {
   type BackupManifest,
   type InventoryBackupPayload,
 } from "../scripts/backup-utils";
+import type { InventoryItem } from "../shared/schema";
 
 const TAR_BLOCK_SIZE = 512;
 
@@ -56,6 +57,28 @@ export class BackupIntegrityError extends Error {
 
 export function createBackupArchiveName(createdAt: string): string {
   return `myinventory-backup-${createdAt.replace(/[:.]/g, "-")}.tar.gz`;
+}
+
+/** Every inventory_items column must appear here, or backups silently lose data */
+export function toBackupInventoryItem(item: InventoryItem): BackupInventoryItem {
+  return {
+    id: item.id,
+    name: item.name,
+    description: item.description,
+    category: item.category,
+    tags: Array.isArray(item.tags) ? item.tags : [],
+    imageUrl: item.imageUrl,
+    imageUrls: Array.isArray(item.imageUrls) ? item.imageUrls : null,
+    barcodeData: item.barcodeData,
+    estimatedValue: item.estimatedValue ?? null,
+    valueConfidence: item.valueConfidence ?? null,
+    valueRationale: item.valueRationale ?? null,
+    location: item.location ?? null,
+    analysisMetadata: item.analysisMetadata ?? null,
+    identification: item.identification ?? null,
+    valuation: item.valuation ?? null,
+    createdAt: item.createdAt,
+  };
 }
 
 export function collectImageReferences(

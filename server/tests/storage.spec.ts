@@ -33,6 +33,8 @@ describe('Storage - Lazy Migration (PRD 0004)', () => {
         valueRationale: 'Based on similar vintage cameras',
         location: 'Storage Room A',
         analysisMetadata: null,
+        identification: null,
+        valuation: null,
         createdAt: '2024-01-15T10:00:00.000Z',
       };
 
@@ -69,6 +71,8 @@ describe('Storage - Lazy Migration (PRD 0004)', () => {
         valueRationale: 'Appraised by expert',
         location: 'Living Room',
         analysisMetadata: null,
+        identification: null,
+        valuation: null,
         createdAt: '2024-06-20T14:30:00.000Z',
       };
 
@@ -110,6 +114,8 @@ describe('Storage - Lazy Migration (PRD 0004)', () => {
           valueRationale: 'Estimate',
           location: null,
           analysisMetadata: null,
+          identification: null,
+          valuation: null,
           createdAt: '2024-01-10T10:00:00.000Z',
         },
         {
@@ -126,6 +132,8 @@ describe('Storage - Lazy Migration (PRD 0004)', () => {
           valueRationale: 'Common book',
           location: 'Shelf',
           analysisMetadata: null,
+          identification: null,
+          valuation: null,
           createdAt: '2024-01-11T10:00:00.000Z',
         },
       ];
@@ -161,6 +169,8 @@ describe('Storage - Lazy Migration (PRD 0004)', () => {
           valueRationale: null,
           location: null,
           analysisMetadata: null,
+          identification: null,
+          valuation: null,
           createdAt: '2024-01-10T10:00:00.000Z',
         },
         // Multi-image item (has imageUrls)
@@ -181,6 +191,8 @@ describe('Storage - Lazy Migration (PRD 0004)', () => {
           valueRationale: 'Priced',
           location: null,
           analysisMetadata: null,
+          identification: null,
+          valuation: null,
           createdAt: '2024-06-15T10:00:00.000Z',
         },
         // Another legacy item
@@ -198,6 +210,8 @@ describe('Storage - Lazy Migration (PRD 0004)', () => {
           valueRationale: null,
           location: 'Closet',
           analysisMetadata: null,
+          identification: null,
+          valuation: null,
           createdAt: '2024-02-20T10:00:00.000Z',
         },
       ];
@@ -246,6 +260,8 @@ describe('Storage - Lazy Migration (PRD 0004)', () => {
           valueRationale: null,
           location: null,
           analysisMetadata: null,
+          identification: null,
+          valuation: null,
           createdAt: '2024-01-01T00:00:00.000Z',
         },
         {
@@ -262,6 +278,8 @@ describe('Storage - Lazy Migration (PRD 0004)', () => {
           valueRationale: null,
           location: null,
           analysisMetadata: null,
+          identification: null,
+          valuation: null,
           createdAt: '2024-12-01T00:00:00.000Z',
         },
         {
@@ -278,6 +296,8 @@ describe('Storage - Lazy Migration (PRD 0004)', () => {
           valueRationale: null,
           location: null,
           analysisMetadata: null,
+          identification: null,
+          valuation: null,
           createdAt: '2024-06-01T00:00:00.000Z',
         },
       ];

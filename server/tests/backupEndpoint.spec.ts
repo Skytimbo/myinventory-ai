@@ -269,6 +269,8 @@ function createInventoryItem(overrides: Partial<InventoryItem>): InventoryItem {
     valueRationale: "Comparable household mug",
     location: "Kitchen",
     analysisMetadata: null,
+    identification: null,
+    valuation: null,
     createdAt: "2026-06-13T00:00:00.000Z",
     ...overrides,
   };

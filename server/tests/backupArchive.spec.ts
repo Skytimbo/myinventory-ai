@@ -3,13 +3,20 @@ import { createWriteStream, promises as fs } from "fs";
 import os from "os";
 import path from "path";
 import { Writable } from "stream";
+import { getTableColumns } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
-import type { BackupInventoryItem } from "../../scripts/backup-utils";
+import { inventoryItems, type InventoryItem, type Valuation } from "@shared/schema";
+import {
+  BACKUP_SCHEMA_VERSION,
+  inventoryItemsToCsv,
+  type BackupInventoryItem,
+} from "../../scripts/backup-utils";
 import { verifyBackupArchive } from "../../scripts/restore-verify-archive";
 import {
   BackupCompletenessError,
   BackupIntegrityError,
   createBackupArchivePlan,
+  toBackupInventoryItem,
   writeBackupArchive,
   type BackupImageFile,
 } from "../backupArchive";
@@ -134,6 +141,173 @@ describe("backup archive integrity", () => {
   }, 10_000);
 });
 
+describe("backup schema compatibility", () => {
+  const columns = Object.values(getTableColumns(inventoryItems));
+
+  it("includes every inventory_items column in endpoint backups", () => {
+    const fields = Object.keys(getTableColumns(inventoryItems)).sort();
+    const backupItem = toBackupInventoryItem(createItem(0, {}) as InventoryItem);
+
+    expect(Object.keys(backupItem).sort()).toEqual(fields);
+  });
+
+  it.each(["scripts/backup.ts", "scripts/restore-verify.ts"])(
+    "references every inventory_items column in %s",
+    async (relativePath) => {
+      const source = await fs.readFile(path.resolve(__dirname, "../..", relativePath), "utf8");
+      const missing = columns
+        .map((column) => column.name)
+        .filter((name) => !new RegExp(`\\b${name}\\b`).test(source));
+
+      expect(missing).toEqual([]);
+    }
+  );
+
+  it("preserves identification and valuation through an archive", async () => {
+    const dir = await makeTempDir();
+    const valuation = createValuation();
+    const items = [
+      createItem(0, {
+        imageUrl: "/objects/items/drill.jpg",
+        identification: {
+          confidence: 0.92,
+          uncertainty: "low",
+          notes: null,
+          alternatives: [],
+          model: "gpt-4o-mini",
+          identifiedAt: CREATED_AT,
+          promptVersion: "identify-v1",
+        },
+        valuation,
+        estimatedValue: "80.00",
+        valueConfidence: "medium",
+      }),
+    ];
+    const imageFiles = await writeImageFiles(
+      dir,
+      { "/objects/items/drill.jpg": randomBytes(100) },
+      items
+    );
+    const archivePath = await writeArchive(dir, items, imageFiles);
+
+    const { manifest, items: restored } = await verifyBackupArchive({
+      archivePath,
+      restoreUploadsDir: path.join(dir, "restored"),
+    });
+
+    expect(manifest.schemaVersion).toBe(BACKUP_SCHEMA_VERSION);
+    expect(restored[0].valuation).toEqual(valuation);
+    expect(restored[0].identification?.promptVersion).toBe("identify-v1");
+    expect(restored[0].estimatedValue).toBe("80.00");
+  });
+
+  it("still accepts 0002 archives that predate identification and valuation", async () => {
+    const dir = await makeTempDir();
+    const items = [createItem(0, { imageUrl: "/objects/items/old.jpg", estimatedValue: "45.00" })];
+    const imageFiles = await writeImageFiles(
+      dir,
+      { "/objects/items/old.jpg": randomBytes(64) },
+      items
+    );
+    const plan = await createBackupArchivePlan({
+      items,
+      imageFiles,
+      sourceAppUrl: "http://test.local",
+      createdAt: CREATED_AT,
+    });
+    plan.manifest.schemaVersion = "0002_analysis_metadata";
+    plan.inventory = {
+      ...plan.inventory,
+      schemaVersion: "0002_analysis_metadata",
+      items: items.map(({ identification: _i, valuation: _v, ...legacy }) => legacy) as
+        BackupInventoryItem[],
+    };
+    const archivePath = path.join(dir, "legacy.tar.gz");
+    await writeBackupArchive(plan, createWriteStream(archivePath));
+
+    const { items: restored } = await verifyBackupArchive({
+      archivePath,
+      restoreUploadsDir: path.join(dir, "restored"),
+    });
+
+    expect(restored[0].identification).toBeNull();
+    expect(restored[0].valuation).toBeNull();
+    expect(restored[0].estimatedValue).toBe("45.00");
+  });
+
+  it("rejects archives with an unknown schema version", async () => {
+    const dir = await makeTempDir();
+    const plan = await createBackupArchivePlan({
+      items: [],
+      imageFiles: [],
+      sourceAppUrl: "http://test.local",
+      createdAt: CREATED_AT,
+    });
+    plan.manifest.schemaVersion = "9999_future";
+    const archivePath = path.join(dir, "future.tar.gz");
+    await writeBackupArchive(plan, createWriteStream(archivePath));
+
+    await expect(
+      verifyBackupArchive({ archivePath, restoreUploadsDir: path.join(dir, "restored") })
+    ).rejects.toThrow("Unsupported archive schema version");
+  });
+
+  it("writes value status to the CSV instead of blank or zero values", () => {
+    const csv = inventoryItemsToCsv([
+      createItem(0, {}),
+      createItem(1, { estimatedValue: "125.00", valueConfidence: "medium" }),
+      createItem(2, {
+        valuation: createValuation({
+          status: "nonmarketable",
+          low: null,
+          likely: null,
+          high: null,
+          confidence: null,
+        }),
+      }),
+      createItem(3, { valuation: createValuation({ staleAt: CREATED_AT }) }),
+    ]);
+    // Every cell is quoted and these synthetic values contain no commas or quotes
+    const rows = csv
+      .split("\n")
+      .map((row) => row.split(",").map((cell) => cell.replace(/^"|"$/g, "")));
+    const header = rows[0];
+    const column = (name: string) => header.indexOf(name);
+
+    expect(rows[1][column("Value Status")]).toBe("not_evaluated");
+    expect(rows[1][column("Estimate Likely")]).toBe("");
+    expect(rows[2][column("Value Status")]).toBe("not_evaluated");
+    expect(rows[2][column("Legacy Estimate")]).toBe("125.00");
+    expect(rows[3][column("Value Status")]).toBe("nonmarketable");
+    expect(rows[3][column("Estimate Likely")]).toBe("");
+    expect(rows[4][column("Estimate Stale")]).toBe("yes");
+    expect(rows[4][column("Evidence Basis")]).toBe("model_judgment");
+  });
+});
+
+function createValuation(overrides: Partial<Valuation> = {}): Valuation {
+  return {
+    status: "estimated",
+    marketability: "marketable",
+    marketabilityReason: "Branded tools resell",
+    currency: "USD",
+    low: "40.00",
+    likely: "55.00",
+    high: "70.00",
+    confidence: "medium",
+    rationale: "Synthetic valuation",
+    missingInformation: [],
+    evidence: { basis: "model_judgment", note: "No marketplace data was retrieved." },
+    basedOn: { name: "Synthetic Item", category: "Test", identifiedAt: CREATED_AT },
+    model: "gpt-4o",
+    evaluatedAt: CREATED_AT,
+    promptVersion: "valuation-v1",
+    staleAt: null,
+    staleReason: null,
+    ...overrides,
+  };
+}
+
 async function makeTempDir(): Promise<string> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "backup-archive-test-"));
   tempDirs.push(dir);
@@ -196,6 +370,8 @@ function createItem(
     valueRationale: null,
     location: null,
     analysisMetadata: null,
+    identification: null,
+    valuation: null,
     createdAt: CREATED_AT,
     ...overrides,
   };

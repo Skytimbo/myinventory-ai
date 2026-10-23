@@ -248,6 +248,8 @@ export class FakeDatabaseStorage implements IStorage {
       id,
       createdAt,
       analysisMetadata: null,
+      identification: null,
+      valuation: null,
       ...item,
     } as InventoryItem;
 

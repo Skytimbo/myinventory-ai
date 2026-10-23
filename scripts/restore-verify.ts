@@ -69,6 +69,8 @@ async function verifyDatabaseRestore(
           value_rationale,
           location,
           analysis_metadata,
+          identification,
+          valuation,
           created_at
         ) VALUES (
           $1::uuid,
@@ -84,7 +86,9 @@ async function verifyDatabaseRestore(
           $11,
           $12,
           $13::jsonb,
-          $14
+          $14::jsonb,
+          $15::jsonb,
+          $16
         )`,
         [
           item.id,
@@ -100,6 +104,8 @@ async function verifyDatabaseRestore(
           item.valueRationale,
           item.location,
           item.analysisMetadata ? JSON.stringify(item.analysisMetadata) : null,
+          item.identification ? JSON.stringify(item.identification) : null,
+          item.valuation ? JSON.stringify(item.valuation) : null,
           item.createdAt,
         ]
       );
@@ -146,6 +152,8 @@ async function assertSchemaReady(client: {
     "value_rationale",
     "location",
     "analysis_metadata",
+    "identification",
+    "valuation",
     "created_at",
   ];
   const missingColumns = requiredColumns.filter((column) => !columns.has(column));

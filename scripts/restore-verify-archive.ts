@@ -3,8 +3,8 @@ import os from "os";
 import path from "path";
 import {
   BACKUP_FORMAT_VERSION,
-  BACKUP_SCHEMA_VERSION,
   PROJECT_NAME,
+  SUPPORTED_BACKUP_SCHEMA_VERSIONS,
   archivePathToFilesystemPath,
   copyFileEnsuringDir,
   extractTarGz,
@@ -43,7 +43,13 @@ export async function verifyBackupArchive({
 
     validateManifest(manifest);
     validateInventoryPayload(inventoryPayload);
-    assertCounts(manifest, inventoryPayload.items);
+    // Older archives predate some columns; restore those as null
+    const items = inventoryPayload.items.map((item) => ({
+      ...item,
+      identification: item.identification ?? null,
+      valuation: item.valuation ?? null,
+    }));
+    assertCounts(manifest, items);
 
     const restoredImageHashes = await restoreImages({
       extractDir,
@@ -52,9 +58,9 @@ export async function verifyBackupArchive({
     });
 
     assertImageHashes(manifest, restoredImageHashes);
-    assertAnalysisMetadataHashes(inventoryPayload.items, restoredImageHashes);
+    assertAnalysisMetadataHashes(items, restoredImageHashes);
 
-    return { manifest, items: inventoryPayload.items };
+    return { manifest, items };
   } finally {
     await fs.rm(extractDir, { recursive: true, force: true });
   }
@@ -67,8 +73,8 @@ function validateManifest(manifest: BackupManifest): void {
   if (manifest.project !== PROJECT_NAME) {
     throw new Error(`Archive project mismatch: ${manifest.project}`);
   }
-  if (manifest.schemaVersion !== BACKUP_SCHEMA_VERSION) {
-    throw new Error(`Archive schema version mismatch: ${manifest.schemaVersion}`);
+  if (!SUPPORTED_BACKUP_SCHEMA_VERSIONS.includes(manifest.schemaVersion)) {
+    throw new Error(`Unsupported archive schema version: ${manifest.schemaVersion}`);
   }
   if (manifest.missingImageReferences.length > 0) {
     throw new Error("Archive manifest contains missing image references");
@@ -79,8 +85,8 @@ function validateInventoryPayload(payload: InventoryBackupPayload): void {
   if (payload.formatVersion !== BACKUP_FORMAT_VERSION) {
     throw new Error(`Unsupported inventory format version: ${payload.formatVersion}`);
   }
-  if (payload.schemaVersion !== BACKUP_SCHEMA_VERSION) {
-    throw new Error(`Inventory schema version mismatch: ${payload.schemaVersion}`);
+  if (!SUPPORTED_BACKUP_SCHEMA_VERSIONS.includes(payload.schemaVersion)) {
+    throw new Error(`Unsupported inventory schema version: ${payload.schemaVersion}`);
   }
 }
 
