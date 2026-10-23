@@ -182,6 +182,20 @@ describe('ItemCard value states', () => {
     expect(card.getByTestId(`ai-details-${item.id}`)).toHaveTextContent('not a valuation');
   });
 
+  it('hides a legacy 0.00 recorded with confidence, and explains it in details', () => {
+    const item = createItem({ estimatedValue: '0.00', valueConfidence: 'low', valueRationale: 'Common rock' });
+    const card = renderCard(item);
+
+    expect(card.queryByTestId(`text-legacy-value-${item.id}`)).toBeNull();
+    expect(card.queryByText(/\$0\.00/)).toBeNull();
+
+    fireEvent.click(card.getByTestId(`button-toggle-ai-details-${item.id}`));
+    const details = card.getByTestId(`ai-details-${item.id}`);
+    expect(details).toHaveTextContent('Recorded as $0.00 (low confidence) by the old combined analysis');
+    expect(details).toHaveTextContent('ambiguous');
+    expect(details).not.toHaveTextContent('Common rock');
+  });
+
   it('reveals evidence and identification uncertainty in AI details on tap', () => {
     const item = createItem({
       identification: {

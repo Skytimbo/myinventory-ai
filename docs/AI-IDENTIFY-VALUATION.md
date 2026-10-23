@@ -42,14 +42,25 @@ Uses `gpt-4o` with up to four photos and the current identification. The model m
 
 `not_evaluated` is not stored: it is the absence of a valuation.
 
-The server enforces the contract whatever the model returns:
+The server validates every response and never reinterprets one. `nonmarketable` and `insufficient_information` are only ever the model's explicit judgments; the server never derives them from missing, zero, or invalid amounts. A response that breaks any rule below is rejected as invalid model output (`InvalidValuationError`, returned as `502 VALUATION_FAILED`), and the stored record, including any earlier valuation, is left unchanged.
 
-- An unknown status is treated as a failure, and nothing is saved.
-- `nonmarketable` marketability overrides a priced status.
-- A price is kept only with `estimated`. Zero, negative, or missing amounts downgrade the result to `insufficient_information`.
-- A self-contradictory range is widened to cover every amount and capped at low confidence. Uncertain marketability is also capped at low confidence.
-- Sentences claiming eBay, sold listings, comparable sales, auctions, or price guides are removed.
+- `status` and `marketability` must both be present and valid, and consistent with each other:
+
+  | Status | Allowed marketability |
+  |---|---|
+  | `estimated` | `marketable` |
+  | `nonmarketable` | `nonmarketable` |
+  | `insufficient_information` | `marketable` or `uncertain` |
+
+- `estimated` needs `low`, `likely`, and `high`, all positive (> $0), with `low ≤ likely ≤ high`, and a confidence of `low`, `medium`, or `high`. Zero, negative, missing, non-numeric, or reversed amounts are invalid. Sub-dollar positive amounts are allowed.
+- `nonmarketable` and `insufficient_information` must not include any amount, including `0`. A confidence level sent with them is ignored.
+
+Two things are still adjusted rather than rejected:
+
+- Sentences claiming eBay, sold listings, comparable sales, auctions, or price guides are removed from the rationale and marketability reason.
 - `evidence` is always set by the server to `{ basis: "model_judgment", note: "...No marketplace or sales data was retrieved." }`.
+
+Because contradictory output is now rejected instead of repaired, expect some Estimate Value attempts to fail and need a retry. `pnpm ai:eval` reports these as failures.
 
 Items that are not identified yet (Quick Capture, or AI failed at upload) must be identified first (`409 NOT_IDENTIFIED`). Items identified by the old combined analysis can be estimated directly.
 
@@ -58,7 +69,7 @@ Items that are not identified yet (Quick Capture, or AI failed at upload) must b
 Rows created before migration 0003 may have `estimated_value` / `value_confidence` / `value_rationale` from the old combined analysis. These are kept unchanged and are never written again.
 
 - They are shown as **"Legacy estimate $X from the old combined analysis (unverified, not counted in totals)"**.
-- A legacy `0.00` with no confidence is treated as a placeholder, not a valuation, and appears only in AI details.
+- Any legacy amount of `0.00` or less is treated as an ambiguous placeholder, whatever confidence was recorded with it, because the old process used 0 to mean both "unknown" and "worthless". Placeholders appear only in AI details, are never shown as a price, and are not counted as legacy estimates. Positive legacy amounts are preserved and shown as legacy estimates.
 - Running Estimate Value on a legacy item adds a new `valuation`; the legacy amount stays available.
 
 ## Totals
@@ -115,4 +126,36 @@ Do these in order. The code must not reach production before the migration: the 
    - Re-identify it and confirm the estimate shows as stale.
    - Download a backup and run `pnpm restore:verify` on it.
 
-**Rollback:** redeploy the previous application version. The two new columns can stay; the old code ignores them. Do not drop them unless you accept losing every identification and valuation created since the migration.
+### Rollback
+
+Redeploy the previous application version. The two new columns can stay: the old code neither reads nor writes them. Do not drop them unless you accept losing every identification and valuation created since the migration.
+
+**Known hazard while rolled back.** The old app's combined **Analyze** (`/analyze`, `/reanalyze`) overwrites `name`, `description`, `category`, `tags`, `analysis_metadata`, and the legacy value columns. It does not touch `identification` or `valuation`. A valuation saved before the rollback therefore stays unmarked even though the item it describes has been re-identified, and after rolling forward the new app would show and total it as a current estimate.
+
+While rolled back:
+
+- Do not use Analyze on any item.
+- Creating new items is fine: they get no `identification` or `valuation`, so they show as legacy-identified and not evaluated after rolling forward.
+
+Before rolling forward again, check whether any identification changed while rolled back. A stored valuation must be marked stale if any of these is true for its row:
+
+1. `valuation.basedOn.name` differs from the row's current `name`, or `valuation.basedOn.category` differs from its current `category`.
+2. `analysis_metadata.timestamp` is later than `valuation.evaluatedAt`. Only an identification writes `analysis_metadata`, so this means the item was re-identified after it was valued, even if the name happened to stay the same.
+3. `valuation.basedOn.identifiedAt` differs from `identification.identifiedAt`. The new app keeps these equal, so a difference is a sign of manual edits or partial restores.
+
+Read-only check (run it on a Neon branch or with a read-only role first):
+
+```sql
+SELECT id, name, valuation->'basedOn'->>'name' AS valued_as, valuation->>'evaluatedAt' AS evaluated_at
+FROM inventory_items
+WHERE valuation IS NOT NULL
+  AND valuation->>'staleAt' IS NULL
+  AND (
+    valuation->'basedOn'->>'name' IS DISTINCT FROM name
+    OR valuation->'basedOn'->>'category' IS DISTINCT FROM category
+    OR (analysis_metadata->>'timestamp')::timestamptz > (valuation->>'evaluatedAt')::timestamptz
+    OR valuation->'basedOn'->>'identifiedAt' IS DISTINCT FROM identification->>'identifiedAt'
+  );
+```
+
+If it returns rows, take a backup, then mark exactly those rows stale before rolling forward. Set `valuation.staleAt` to the current time and `valuation.staleReason` to `"reidentified_during_rollback"`; leave every other field unchanged so the estimate stays visible as stale. The app does not do this automatically. If the query returns no rows, no action is needed.

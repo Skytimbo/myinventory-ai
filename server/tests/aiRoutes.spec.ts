@@ -8,6 +8,7 @@ import session from "express-session";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { InventoryItem } from "@shared/schema";
+import { parseValuation } from "../analyzer";
 import { ApiError } from "../errors";
 import { registerRoutes } from "../routes";
 import {
@@ -140,6 +141,33 @@ describe("AI routes", () => {
 
       expect(response.body.code).toBe("VALUATION_FAILED");
       expect(await storage.getItem(ITEM_ID)).toEqual(before);
+    });
+
+    it("returns VALUATION_FAILED for a zero-valued model estimate and keeps existing data", async () => {
+      const { app, storage, objectStorage, analyzer } = await createTestApp();
+      await seedItem(storage, objectStorage, { analysisMetadata: { model: "openai" } });
+      const agent = await login(app);
+      await agent.post(`/api/items/${ITEM_ID}/estimate-value`).expect(200);
+      const before = structuredClone(await storage.getItem(ITEM_ID));
+      vi.spyOn(analyzer, "estimateValue").mockImplementationOnce(async () => ({
+        ...parseValuation({
+          status: "estimated",
+          marketability: "marketable",
+          low: "0",
+          likely: "0",
+          high: "0",
+          confidence: "low",
+        }),
+        model: "test",
+        promptVersion: "test",
+        raw: null,
+      }));
+
+      const response = await agent.post(`/api/items/${ITEM_ID}/estimate-value`).expect(502);
+
+      expect(response.body.code).toBe("VALUATION_FAILED");
+      expect(await storage.getItem(ITEM_ID)).toEqual(before);
+      expect(before?.valuation?.status).toBe("estimated");
     });
   });
 });

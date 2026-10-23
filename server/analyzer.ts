@@ -220,37 +220,79 @@ const VALUATION_STATUSES = ["estimated", "nonmarketable", "insufficient_informat
 const MARKETABILITY = ["marketable", "nonmarketable", "uncertain"] as const;
 const CONFIDENCE_LEVELS = ["low", "medium", "high"] as const;
 
+/** Model output that violates the valuation contract; nothing is saved */
+export class InvalidValuationError extends Error {
+  constructor(reason: string) {
+    super(`AI returned an invalid valuation: ${reason}`);
+    this.name = "InvalidValuationError";
+  }
+}
+
 /**
- * Validate and normalize a model's valuation JSON.
+ * Which marketability judgments each status may accompany. "estimated" needs a
+ * market; "nonmarketable" is exactly the nonmarketable judgment; an item can
+ * have (or possibly have) a market yet still lack enough information to price.
+ */
+const ALLOWED_MARKETABILITY: Record<
+  (typeof VALUATION_STATUSES)[number],
+  readonly (typeof MARKETABILITY)[number][]
+> = {
+  estimated: ["marketable"],
+  nonmarketable: ["nonmarketable"],
+  insufficient_information: ["marketable", "uncertain"],
+};
+
+/**
+ * Validate a model's valuation JSON against the contract.
  *
- * Throws when the outcome is unusable (unknown status), so nothing is saved.
- * Otherwise enforces the contract: marketability decides first, prices only
- * accompany "estimated", zero is never a price, and claims of having checked
- * sales data are removed.
+ * Throws InvalidValuationError (so nothing is saved) instead of reinterpreting
+ * contradictory output. The server never synthesizes a status: "nonmarketable"
+ * and "insufficient_information" are only ever the model's explicit judgments.
+ * - status and marketability must be valid and consistent with each other
+ * - "estimated" needs a valid confidence and low <= likely <= high, all > 0
+ * - other statuses must not carry any amount
+ * Sentences claiming sales data was consulted are still removed, since none is.
  */
 export function parseValuation(
   parsed: Record<string, unknown>
 ): Omit<ValuationResult, "model" | "promptVersion" | "raw"> {
-  let status = pickEnum(parsed.status, VALUATION_STATUSES);
+  const status = pickEnum(parsed.status, VALUATION_STATUSES);
   if (!status) {
-    throw new Error("AI returned an invalid valuation status");
+    throw new InvalidValuationError("unknown status");
   }
 
-  const marketability =
-    pickEnum(parsed.marketability, MARKETABILITY) ??
-    (status === "estimated"
-      ? "marketable"
-      : status === "nonmarketable"
-        ? "nonmarketable"
-        : "uncertain");
-
-  // Marketability is assessed first and wins over a contradictory status
-  if (marketability === "nonmarketable") {
-    status = "nonmarketable";
+  const marketability = pickEnum(parsed.marketability, MARKETABILITY);
+  if (!marketability) {
+    throw new InvalidValuationError("missing or unknown marketability");
+  }
+  if (!ALLOWED_MARKETABILITY[status].includes(marketability)) {
+    throw new InvalidValuationError(
+      `status "${status}" contradicts marketability "${marketability}"`
+    );
   }
 
-  let confidence = pickEnum(parsed.confidence, CONFIDENCE_LEVELS);
-  let rationale = stripEvidenceClaims(cleanText(parsed.rationale, 1000));
+  let amounts: { low: string; likely: string; high: string } | null = null;
+  let confidence: (typeof CONFIDENCE_LEVELS)[number] | null = null;
+
+  if (status === "estimated") {
+    const low = parseAmount(parsed.low);
+    const likely = parseAmount(parsed.likely);
+    const high = parseAmount(parsed.high);
+    if (low === null || likely === null || high === null) {
+      throw new InvalidValuationError("estimate without a positive low, likely, and high amount");
+    }
+    if (!(low <= likely && likely <= high)) {
+      throw new InvalidValuationError("estimate range is not ordered low <= likely <= high");
+    }
+    confidence = pickEnum(parsed.confidence, CONFIDENCE_LEVELS);
+    if (!confidence) {
+      throw new InvalidValuationError("estimate without a valid confidence");
+    }
+    amounts = { low: low.toFixed(2), likely: likely.toFixed(2), high: high.toFixed(2) };
+  } else if ([parsed.low, parsed.likely, parsed.high].some(isProvided)) {
+    throw new InvalidValuationError(`status "${status}" must not include any amount`);
+  }
+
   const missingInformation = Array.isArray(parsed.missingInformation)
     ? parsed.missingInformation
         .filter((entry): entry is string => typeof entry === "string" && entry.trim() !== "")
@@ -258,44 +300,17 @@ export function parseValuation(
         .slice(0, 5)
     : [];
 
-  let low: number | null = null;
-  let likely: number | null = null;
-  let high: number | null = null;
-
-  if (status === "estimated") {
-    const amounts = normalizeRange(
-      parseAmount(parsed.low),
-      parseAmount(parsed.likely),
-      parseAmount(parsed.high)
-    );
-
-    if (!amounts) {
-      // A price cannot be established; never fall back to $0
-      status = "insufficient_information";
-      rationale = [rationale, "The model did not provide a usable price range."]
-        .filter(Boolean)
-        .join(" ");
-    } else {
-      ({ low, likely, high } = amounts);
-      // Uncertain marketability or a self-contradictory range is never more than low confidence
-      confidence =
-        marketability === "uncertain" || !amounts.consistent ? "low" : confidence ?? "low";
-    }
-  }
-
-  if (status !== "estimated") {
-    confidence = null;
-  }
-
   return {
     status,
     marketability,
     marketabilityReason: stripEvidenceClaims(cleanText(parsed.marketabilityReason, 500)),
-    low: formatAmount(low),
-    likely: formatAmount(likely),
-    high: formatAmount(high),
+    low: amounts?.low ?? null,
+    likely: amounts?.likely ?? null,
+    high: amounts?.high ?? null,
     confidence,
-    rationale: rationale || "Model judgment based on the photos and identification.",
+    rationale:
+      stripEvidenceClaims(cleanText(parsed.rationale, 1000)) ||
+      "Model judgment based on the photos and identification.",
     missingInformation,
   };
 }
@@ -321,12 +336,13 @@ function pickEnum<T extends string>(value: unknown, allowed: readonly T[]): T | 
     : null;
 }
 
+/** A positive USD amount, or null when missing, zero, negative, non-numeric, or implausible */
 function parseAmount(value: unknown): number | null {
   const parsed =
     typeof value === "number"
       ? value
       : typeof value === "string"
-        ? Number.parseFloat(value.replace(/[$,\s]/g, ""))
+        ? Number(value.replace(/[$,\s]/g, ""))
         : Number.NaN;
   if (!Number.isFinite(parsed) || parsed <= 0 || parsed > MAX_ESTIMATE_USD) {
     return null;
@@ -334,31 +350,9 @@ function parseAmount(value: unknown): number | null {
   return Math.round(parsed * 100) / 100;
 }
 
-function normalizeRange(
-  low: number | null,
-  likely: number | null,
-  high: number | null
-): { low: number; likely: number; high: number; consistent: boolean } | null {
-  const known = [low, likely, high].filter((value): value is number => value !== null);
-  if (known.length === 0) {
-    return null;
-  }
-
-  const ordered = known.every((value, index) => index === 0 || known[index - 1] <= value);
-  const center =
-    likely ?? (low !== null && high !== null ? (low + high) / 2 : (low ?? high)!);
-
-  // The range spans every amount given, so likely always falls inside it
-  return {
-    low: Math.min(...known),
-    likely: Math.round(center * 100) / 100,
-    high: Math.max(...known),
-    consistent: ordered,
-  };
-}
-
-function formatAmount(value: number | null): string | null {
-  return value === null ? null : value.toFixed(2);
+/** Any amount field the model filled in, including 0 */
+function isProvided(value: unknown): boolean {
+  return value !== null && value !== undefined && value !== "";
 }
 
 /** Map identification confidence to the uncertainty level shown to users */

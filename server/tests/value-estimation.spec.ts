@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
+  InvalidValuationError,
   OpenAIAnalyzer,
   parseValuation,
   stripEvidenceClaims,
@@ -36,6 +37,52 @@ const input: ValuationInput = {
   identificationNotes: null,
 };
 
+/** A valid "estimated" response; tests override one field to break it */
+function estimate(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    marketability: "marketable",
+    marketabilityReason: "Branded cordless drills have steady used demand.",
+    status: "estimated",
+    low: "40",
+    likely: "55.5",
+    high: "$70.00",
+    confidence: "medium",
+    rationale: "Used cordless drills of this type with a battery typically sell in this range.",
+    missingInformation: ["battery condition"],
+    ...overrides,
+  };
+}
+
+function nonmarketable(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    marketability: "nonmarketable",
+    marketabilityReason: "Ordinary river rocks are freely available and not bought used.",
+    status: "nonmarketable",
+    low: null,
+    likely: null,
+    high: null,
+    confidence: null,
+    rationale: "No realistic resale market.",
+    missingInformation: [],
+    ...overrides,
+  };
+}
+
+function insufficient(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    marketability: "uncertain",
+    marketabilityReason: "Value depends on maker and age, which are not visible.",
+    status: "insufficient_information",
+    low: null,
+    likely: null,
+    high: null,
+    confidence: null,
+    rationale: "Could range widely depending on maker.",
+    missingInformation: ["maker's mark", "photo of the base", "professional appraisal"],
+    ...overrides,
+  };
+}
+
 describe("OpenAIAnalyzer.estimateValue", () => {
   let cheapClient: ReturnType<typeof createMockClient>;
   let premiumClient: ReturnType<typeof createMockClient>;
@@ -48,9 +95,7 @@ describe("OpenAIAnalyzer.estimateValue", () => {
   });
 
   it("uses the premium model with a marketability-first, no-claimed-evidence prompt", async () => {
-    premiumClient.chat.completions.create.mockResolvedValue(
-      makeAIResponse({ status: "nonmarketable", marketability: "nonmarketable" })
-    );
+    premiumClient.chat.completions.create.mockResolvedValue(makeAIResponse(nonmarketable()));
 
     const result = await analyzer.estimateValue({
       ...input,
@@ -70,6 +115,14 @@ describe("OpenAIAnalyzer.estimateValue", () => {
     expect(result).toMatchObject({ model: "gpt-4o", promptVersion: "valuation-v1" });
   });
 
+  it("rejects a zero-valued estimate from the model", async () => {
+    premiumClient.chat.completions.create.mockResolvedValue(
+      makeAIResponse(estimate({ low: "0", likely: "0", high: "0" }))
+    );
+
+    await expect(analyzer.estimateValue(input)).rejects.toBeInstanceOf(InvalidValuationError);
+  });
+
   it("propagates API errors so nothing is saved", async () => {
     premiumClient.chat.completions.create.mockRejectedValue(new Error("Service unavailable"));
 
@@ -86,22 +139,11 @@ describe("OpenAIAnalyzer.estimateValue", () => {
 });
 
 describe("parseValuation", () => {
-  describe("synthetic scenarios", () => {
-    it("gives an ordinary river rock no price", () => {
-      const result = parseValuation({
+  describe("valid outcomes stay distinct", () => {
+    it("accepts an ordinary river rock as nonmarketable with no price", () => {
+      expect(parseValuation(nonmarketable())).toMatchObject({
+        status: "nonmarketable",
         marketability: "nonmarketable",
-        marketabilityReason: "Ordinary river rocks are freely available and not bought used.",
-        status: "nonmarketable",
-        low: null,
-        likely: null,
-        high: null,
-        confidence: null,
-        rationale: "No realistic resale market.",
-        missingInformation: [],
-      });
-
-      expect(result).toMatchObject({
-        status: "nonmarketable",
         low: null,
         likely: null,
         high: null,
@@ -109,37 +151,10 @@ describe("parseValuation", () => {
       });
     });
 
-    it("drops an invented price when marketability is nonmarketable", () => {
-      const result = parseValuation({
-        marketability: "nonmarketable",
+    it("accepts a branded tool estimate as a positive ordered range", () => {
+      expect(parseValuation(estimate())).toMatchObject({
         status: "estimated",
-        low: "1.00",
-        likely: "2.00",
-        high: "5.00",
-        confidence: "low",
-        rationale: "Decorative rock.",
-      });
-
-      expect(result.status).toBe("nonmarketable");
-      expect(result.likely).toBeNull();
-      expect(result.confidence).toBeNull();
-    });
-
-    it("estimates a branded tool as a range", () => {
-      const result = parseValuation({
         marketability: "marketable",
-        marketabilityReason: "Branded cordless drills have steady used demand.",
-        status: "estimated",
-        low: "40",
-        likely: "55.5",
-        high: "$70.00",
-        confidence: "medium",
-        rationale: "Used cordless drills of this type with a battery typically sell in this range.",
-        missingInformation: ["battery condition"],
-      });
-
-      expect(result).toMatchObject({
-        status: "estimated",
         low: "40.00",
         likely: "55.50",
         high: "70.00",
@@ -148,115 +163,104 @@ describe("parseValuation", () => {
       });
     });
 
-    it("estimates a generic household object with low confidence by default", () => {
-      const result = parseValuation({
-        marketability: "marketable",
-        status: "estimated",
-        low: 1,
-        likely: 2,
-        high: 4,
-        rationale: "Plain mugs sell for very little secondhand.",
-      });
-
-      expect(result).toMatchObject({ status: "estimated", likely: "2.00", confidence: "low" });
-    });
-
-    it("reports insufficient information for an ambiguous antique without a price", () => {
-      const result = parseValuation({
-        marketability: "uncertain",
-        marketabilityReason: "Value depends on maker and age, which are not visible.",
-        status: "insufficient_information",
-        low: "50.00",
-        likely: "200.00",
-        high: "800.00",
-        confidence: "low",
-        rationale: "Could range widely depending on maker.",
-        missingInformation: ["maker's mark", "photo of the base", "professional appraisal"],
-      });
-
-      expect(result).toMatchObject({
-        status: "insufficient_information",
-        marketability: "uncertain",
-        low: null,
-        likely: null,
-        high: null,
-        confidence: null,
-        missingInformation: ["maker's mark", "photo of the base", "professional appraisal"],
-      });
-    });
-  });
-
-  describe("unknown is never zero", () => {
-    it.each([
-      ["zero", { low: "0", likely: "0.00", high: "0" }],
-      ["negative", { likely: "-5" }],
-      ["missing", {}],
-      ["non-numeric", { likely: "unknown" }],
-    ])("downgrades an estimate with %s amounts to insufficient information", (_label, amounts) => {
-      const result = parseValuation({
-        marketability: "marketable",
-        status: "estimated",
-        confidence: "high",
-        ...amounts,
-      });
-
-      expect(result.status).toBe("insufficient_information");
-      expect(result.likely).toBeNull();
-      expect(result.confidence).toBeNull();
-    });
-  });
-
-  describe("range normalization", () => {
-    it("fills a missing likely value with the midpoint", () => {
+    it("accepts a cheap generic household estimate", () => {
       expect(
-        parseValuation({ status: "estimated", low: "10", high: "30" })
-      ).toMatchObject({ low: "10.00", likely: "20.00", high: "30.00" });
+        parseValuation(estimate({ low: 1, likely: 2, high: 4, confidence: "low" }))
+      ).toMatchObject({ status: "estimated", low: "1.00", likely: "2.00", high: "4.00" });
     });
 
-    it("widens a self-contradictory range to cover every amount and lowers confidence", () => {
+    it("accepts a sub-dollar estimate (positive is not zero)", () => {
       expect(
-        parseValuation({
-          status: "estimated",
-          low: "90",
-          likely: "500",
-          high: "20",
-          confidence: "high",
-        })
-      ).toMatchObject({ low: "20.00", likely: "500.00", high: "500.00", confidence: "low" });
+        parseValuation(estimate({ low: "0.25", likely: "0.50", high: "1" }))
+      ).toMatchObject({ status: "estimated", likely: "0.50" });
     });
 
-    it("caps confidence at low when marketability is uncertain", () => {
-      expect(
-        parseValuation({
-          status: "estimated",
-          marketability: "uncertain",
-          likely: "40",
-          confidence: "high",
-        }).confidence
-      ).toBe("low");
+    it("accepts a flat range where low = likely = high", () => {
+      expect(parseValuation(estimate({ low: "5", likely: "5", high: "5" }))).toMatchObject({
+        low: "5.00",
+        likely: "5.00",
+        high: "5.00",
+      });
     });
-  });
 
-  describe("failures", () => {
-    it.each([undefined, "unknown", "priced", 3])(
-      "throws on invalid status %s so nothing is saved",
-      (status) => {
-        expect(() => parseValuation({ status, likely: "10" })).toThrow(
-          "AI returned an invalid valuation status"
-        );
+    it.each(["uncertain", "marketable"])(
+      "accepts insufficient information with %s marketability and no price",
+      (marketability) => {
+        expect(parseValuation(insufficient({ marketability }))).toMatchObject({
+          status: "insufficient_information",
+          marketability,
+          likely: null,
+          confidence: null,
+          missingInformation: ["maker's mark", "photo of the base", "professional appraisal"],
+        });
       }
     );
   });
 
+  describe("estimated without a valid positive range is invalid", () => {
+    it.each([
+      ["zero amounts", { low: "0", likely: "0.00", high: "0" }],
+      ["a zero low", { low: "0" }],
+      ["negative amounts", { low: "-10", likely: "-5", high: "-1" }],
+      ["missing amounts", { low: undefined, likely: undefined, high: undefined }],
+      ["null amounts", { low: null, likely: null, high: null }],
+      ["a missing likely", { likely: undefined }],
+      ["a missing high", { high: null }],
+      ["non-numeric amounts", { likely: "unknown" }],
+      ["partly numeric text", { likely: "55 dollars" }],
+      ["an implausible amount", { high: "99999999" }],
+      ["a reversed range", { low: "90", likely: "55", high: "20" }],
+      ["likely above high", { likely: "500" }],
+      ["likely below low", { likely: "10" }],
+      ["no confidence", { confidence: undefined }],
+      ["an unknown confidence", { confidence: "very high" }],
+    ])("rejects an estimate with %s", (_label, overrides) => {
+      expect(() => parseValuation(estimate(overrides))).toThrow(InvalidValuationError);
+    });
+  });
+
+  describe("contradictory or incomplete status is invalid", () => {
+    it.each([
+      ["estimated + nonmarketable", estimate({ marketability: "nonmarketable" })],
+      ["estimated + uncertain", estimate({ marketability: "uncertain" })],
+      ["nonmarketable + marketable", nonmarketable({ marketability: "marketable" })],
+      ["nonmarketable + uncertain", nonmarketable({ marketability: "uncertain" })],
+      ["insufficient + nonmarketable", insufficient({ marketability: "nonmarketable" })],
+      ["missing marketability", estimate({ marketability: undefined })],
+      ["unknown marketability", nonmarketable({ marketability: "maybe" })],
+    ])("rejects %s", (_label, output) => {
+      expect(() => parseValuation(output)).toThrow(InvalidValuationError);
+    });
+
+    it.each([undefined, "unknown", "priced", 3])("rejects invalid status %s", (status) => {
+      expect(() => parseValuation(estimate({ status }))).toThrow("unknown status");
+    });
+  });
+
+  describe("prices never accompany other statuses", () => {
+    it.each([
+      ["nonmarketable with a price", nonmarketable({ likely: "5.00" })],
+      ["nonmarketable with zero amounts", nonmarketable({ low: "0", likely: "0", high: "0" })],
+      ["insufficient with a price range", insufficient({ low: "50", likely: "200", high: "800" })],
+      ["insufficient with a zero amount", insufficient({ likely: 0 })],
+    ])("rejects %s instead of dropping the amounts", (_label, output) => {
+      expect(() => parseValuation(output)).toThrow("must not include any amount");
+    });
+
+    it("ignores a confidence level on non-estimated outcomes", () => {
+      expect(parseValuation(nonmarketable({ confidence: "high" })).confidence).toBeNull();
+    });
+  });
+
   describe("evidence claims", () => {
     it("removes claims of having checked sales data", () => {
-      const result = parseValuation({
-        status: "estimated",
-        likely: "120",
-        rationale:
-          "Based on recent eBay sold listings, these cameras sell well. Working film cameras of this model are popular with hobbyists.",
-        marketabilityReason: "I checked comparable sales. Film cameras have an active used market.",
-      });
+      const result = parseValuation(
+        estimate({
+          rationale:
+            "Based on recent eBay sold listings, these cameras sell well. Working film cameras of this model are popular with hobbyists.",
+          marketabilityReason: "I checked comparable sales. Film cameras have an active used market.",
+        })
+      );
 
       expect(result.rationale).toBe(
         "Working film cameras of this model are popular with hobbyists."
@@ -265,10 +269,9 @@ describe("parseValuation", () => {
     });
 
     it("falls back to an explicit model-judgment rationale when nothing remains", () => {
-      expect(
-        parseValuation({ status: "estimated", likely: "10", rationale: "Comparable sales show $10." })
-          .rationale
-      ).toBe("Model judgment based on the photos and identification.");
+      expect(parseValuation(estimate({ rationale: "Comparable sales show $10." })).rationale).toBe(
+        "Model judgment based on the photos and identification."
+      );
     });
 
     it.each([

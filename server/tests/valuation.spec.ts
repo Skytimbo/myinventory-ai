@@ -72,6 +72,30 @@ describe("getValuationView", () => {
     expect(view.status).toBe("not_evaluated");
   });
 
+  it.each([
+    ["0.00 with low confidence", "0.00", "low"],
+    ["0.00 with high confidence", "0.00", "high"],
+    ["a negative amount", "-5.00", "medium"],
+  ])("treats a legacy %s as an ambiguous placeholder", (_label, amount, confidence) => {
+    const view = getValuationView({
+      valuation: null,
+      estimatedValue: amount,
+      valueConfidence: confidence,
+      valueRationale: "Common rock",
+    });
+
+    expect(view.legacy).toMatchObject({ amount, confidence, isPlaceholder: true });
+    expect(view.status).toBe("not_evaluated");
+    expect(summarizeValuations([{ valuation: null, estimatedValue: amount, valueConfidence: confidence, valueRationale: null }]).legacyOnlyCount).toBe(0);
+  });
+
+  it("keeps a valid positive legacy estimate as a non-placeholder", () => {
+    expect(
+      getValuationView({ valuation: null, estimatedValue: "0.01", valueConfidence: "low", valueRationale: null })
+        .legacy?.isPlaceholder
+    ).toBe(false);
+  });
+
   it("reports a legacy amount alongside a newer valuation without mixing them", () => {
     const view = getValuationView({
       valuation: createValuation(),

@@ -20,7 +20,10 @@ export interface LegacyEstimate {
   amount: string;
   confidence: string | null;
   rationale: string | null;
-  /** "0.00" with no confidence: an old placeholder, not a valuation */
+  /**
+   * Amount <= 0 (or unreadable), whatever confidence was recorded. The old
+   * combined analysis used 0 ambiguously, so it is not treated as a valuation.
+   */
   isPlaceholder: boolean;
 }
 
@@ -77,12 +80,12 @@ function getLegacyEstimate(item: ValuationFields): LegacyEstimate | null {
     return null;
   }
 
-  const confidence = item.valueConfidence ?? null;
+  const amount = parseAmount(item.estimatedValue);
   return {
     amount: item.estimatedValue,
-    confidence,
+    confidence: item.valueConfidence ?? null,
     rationale: item.valueRationale ?? null,
-    isPlaceholder: parseAmount(item.estimatedValue) === 0 && !confidence,
+    isPlaceholder: amount === null || amount <= 0,
   };
 }
 

@@ -154,7 +154,7 @@ export function ValueSummary({ item }: ValueSummaryProps) {
               <dt className="font-semibold">Legacy estimate</dt>
               <dd className="text-muted-foreground">
                 {legacy.isPlaceholder
-                  ? `Placeholder value ${formatUsd(legacy.amount)} with no confidence recorded; not a valuation.`
+                  ? `Recorded as ${formatUsd(legacy.amount) ?? legacy.amount}${legacy.confidence ? ` (${legacy.confidence} confidence)` : ""} by the old combined analysis. A zero value there is ambiguous (unknown or worthless), so it is not a valuation.`
                   : `${formatUsd(legacy.amount)}${legacy.confidence ? `, ${legacy.confidence} confidence` : ""}. Produced by the old combined analysis; not verified under the current process.`}
                 {legacy.rationale && !legacy.isPlaceholder && <> {legacy.rationale}</>}
               </dd>

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ItemService } from "../itemService";
+import { InvalidValuationError, OpenAIAnalyzer } from "../analyzer";
 import {
   FakeDatabaseStorage,
   FakeObjectStorageService,
@@ -350,6 +351,39 @@ describe("ItemService", () => {
 
     it("should throw if item not found", async () => {
       await expect(service.estimateValue("nonexistent-id")).rejects.toThrow("Item not found");
+    });
+
+    describe("with invalid model output (real OpenAIAnalyzer, mocked client)", () => {
+      const respond = (fields: Record<string, unknown>) => ({
+        choices: [{ message: { content: JSON.stringify(fields) } }],
+      });
+
+      it.each([
+        ["a zero-valued estimate", { status: "estimated", marketability: "marketable", low: "0", likely: "0", high: "0", confidence: "low" }],
+        ["an estimate with no range", { status: "estimated", marketability: "marketable", confidence: "medium" }],
+        ["status contradicting marketability", { status: "nonmarketable", marketability: "marketable" }],
+        ["a price on insufficient information", { status: "insufficient_information", marketability: "uncertain", likely: "200" }],
+      ])("should reject %s and keep the record unchanged", async (_label, output) => {
+        const premium = { chat: { completions: { create: vi.fn().mockResolvedValue(respond(output)) } } };
+        const realAnalyzer = new OpenAIAnalyzer({} as never, premium as never);
+        const realService = new ItemService(storage, objectStorage, realAnalyzer);
+
+        const { item } = await service.createItem({ files: [makeFile()] });
+        await service.estimateValue(item.id);
+        await storage.updateItem(item.id, {
+          estimatedValue: "125.00",
+          valueConfidence: "medium",
+          valueRationale: "Legacy",
+        });
+        const before = structuredClone(await storage.getItem(item.id));
+
+        await expect(realService.estimateValue(item.id)).rejects.toBeInstanceOf(
+          InvalidValuationError
+        );
+
+        expect(premium.chat.completions.create).toHaveBeenCalledTimes(1);
+        expect(await storage.getItem(item.id)).toEqual(before);
+      });
     });
   });
 
