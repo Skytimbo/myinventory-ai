@@ -1,15 +1,42 @@
 /**
- * IAnalyzer Interface & Implementations (Architecture Refactoring)
+ * IAnalyzer Interface & Implementations
  *
  * This module provides:
  * - IAnalyzer interface for pluggable AI image analysis
- * - OpenAIAnalyzer: Production implementation using GPT-4 Vision
+ * - OpenAIAnalyzer: Production implementation using OpenAI vision models
  * - MockAnalyzer: Testing implementation with deterministic output
  *
- * The strategy pattern allows swapping AI providers without changing business logic.
+ * Identification and valuation are separate operations (migration 0003).
+ * Identification never produces monetary values.
  */
 
 import type OpenAI from "openai";
+
+export const IDENTIFY_PROMPT_VERSION = "identify-v1";
+export const IDENTIFY_MODEL_CHEAP = "gpt-4o-mini";
+export const IDENTIFY_MODEL_PREMIUM = "gpt-4o";
+
+/** Below this confidence the cheap model's answer is retried on the premium model */
+const PREMIUM_FALLBACK_THRESHOLD = 0.4;
+
+/** Maximum number of item photos sent to the model per request */
+export const MAX_AI_IMAGES = 4;
+
+const CATEGORIES = [
+  "Electronics",
+  "Clothing",
+  "Furniture",
+  "Collectibles",
+  "Antiques",
+  "Books",
+  "Tools",
+  "Kitchen",
+  "Household",
+  "Sports",
+  "Toys",
+  "Natural Objects",
+  "Other",
+];
 
 /**
  * Capabilities that an analyzer may support
@@ -25,17 +52,21 @@ export interface AnalyzerCapabilities {
 }
 
 /**
- * Result of analyzing an image
+ * Result of identifying an item. Contains no monetary fields.
  */
-export interface AnalysisResult {
+export interface IdentificationResult {
   name: string;
   description: string;
   category: string;
   tags: string[];
+  /** 0..1, how sure the model is about what the item is */
   confidence: number;
-  estimatedValue: string | null;
-  valueConfidence: "low" | "medium" | "high" | null;
-  valueRationale: string | null;
+  /** What is uncertain and what would help, or null */
+  notes: string | null;
+  /** Other plausible identifications */
+  alternatives: string[];
+  model: string;
+  promptVersion: string;
   raw: unknown;
 }
 
@@ -44,17 +75,17 @@ export interface AnalysisResult {
  * Implementations can use different AI providers (OpenAI, Claude, local models, etc.)
  */
 export interface IAnalyzer {
-  /** Analyze an image buffer and return structured metadata */
-  analyze(imageBuffer: Buffer): Promise<AnalysisResult>;
+  /** Identify the item shown in one or more photos of the same item */
+  identify(images: Buffer[]): Promise<IdentificationResult>;
 
   /** Query what this analyzer supports */
   readonly capabilities: AnalyzerCapabilities;
 }
 
 /**
- * OpenAI-based image analyzer using GPT-4 Vision
+ * OpenAI-based image analyzer
  *
- * Uses a tiered approach:
+ * Identification uses a tiered approach:
  * 1. Try gpt-4o-mini first (cheap, fast)
  * 2. If confidence < 0.4, fallback to gpt-4o (premium, accurate)
  */
@@ -69,161 +100,188 @@ export class OpenAIAnalyzer implements IAnalyzer {
     private openaiPremium: OpenAI
   ) {}
 
-  async analyze(imageBuffer: Buffer): Promise<AnalysisResult> {
-    const cheap = await this.analyzeWithModel(
+  async identify(images: Buffer[]): Promise<IdentificationResult> {
+    const cheap = await this.identifyWithModel(
       this.openaiCheap,
-      "gpt-4o-mini",
-      imageBuffer
+      IDENTIFY_MODEL_CHEAP,
+      images
     );
 
-    // Policy: if low confidence → fallback to premium model
-    if (cheap.confidence >= 0.4) {
+    if (cheap.confidence >= PREMIUM_FALLBACK_THRESHOLD) {
       return cheap;
     }
 
-    return await this.analyzeWithModel(
-      this.openaiPremium,
-      "gpt-4o",
-      imageBuffer
-    );
+    return this.identifyWithModel(this.openaiPremium, IDENTIFY_MODEL_PREMIUM, images);
   }
 
-  private async analyzeWithModel(
+  private async identifyWithModel(
     client: OpenAI,
     model: string,
-    imageBuffer: Buffer
-  ): Promise<AnalysisResult> {
-    const isPremium = model === "gpt-4o";
-
-    const prompt = isPremium
-      ? this.getPremiumPrompt()
-      : this.getCheapPrompt();
-
-    const response = await client.chat.completions.create({
-      model,
-      messages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "image_url",
-              image_url: {
-                url:
-                  "data:image/jpeg;base64," + imageBuffer.toString("base64"),
-              },
-            },
-            {
-              type: "text",
-              text: prompt,
-            },
-          ],
-        },
-      ],
-      response_format: { type: "json_object" },
-      max_tokens: 1000,
-      temperature: 0,
-      seed: 42,
-    });
-
-    const content = response.choices[0]?.message?.content;
-    if (!content) {
-      throw new Error("No response from AI");
-    }
-
-    const parsed = JSON.parse(content);
-
-    // Validate and normalize valueConfidence
-    const validConfidences = ["low", "medium", "high"];
-    const valueConfidence = validConfidences.includes(parsed.valueConfidence)
-      ? (parsed.valueConfidence as "low" | "medium" | "high")
-      : null;
-
-    // Validate estimatedValue format (should be decimal string like "45.00")
-    const estimatedValue =
-      typeof parsed.estimatedValue === "string" &&
-      /^\d+(\.\d{1,2})?$/.test(parsed.estimatedValue)
-        ? parsed.estimatedValue.includes(".")
-          ? parsed.estimatedValue
-          : parsed.estimatedValue + ".00"
-        : null;
+    images: Buffer[]
+  ): Promise<IdentificationResult> {
+    const { parsed, response } = await requestJson(client, model, images, getIdentifyPrompt());
 
     return {
-      name: parsed.name || "Item",
-      description: parsed.description || "Unknown item",
-      category: parsed.category || "Uncategorized",
-      tags: Array.isArray(parsed.tags) ? parsed.tags : [],
-      confidence:
-        typeof parsed.confidence === "number"
-          ? parsed.confidence
-          : isPremium
-            ? 0.9
-            : 0.4,
-      estimatedValue,
-      valueConfidence,
-      valueRationale:
-        typeof parsed.valueRationale === "string"
-          ? parsed.valueRationale
-          : null,
+      ...parseIdentification(parsed, model === IDENTIFY_MODEL_PREMIUM ? 0.9 : 0.4),
+      model,
+      promptVersion: IDENTIFY_PROMPT_VERSION,
       raw: response,
     };
-  }
-
-  private getCheapPrompt(): string {
-    return `Analyze this item image and return JSON with these fields:
-{
-  "name": "Short descriptive name for the item",
-  "description": "Brief description of the item",
-  "category": "Category (Electronics, Clothing, Furniture, Collectibles, Books, Tools, Kitchen, Sports, Toys, Other)",
-  "tags": ["relevant", "searchable", "tags"],
-  "confidence": 0.0-1.0,
-  "estimatedValue": "USD resale value as decimal string (e.g., '45.00')",
-  "valueConfidence": "low|medium|high",
-  "valueRationale": "Brief 1-sentence explanation of the valuation"
-}
-
-For value estimation:
-- Base on secondary market prices (eBay, Craigslist, Facebook Marketplace), NOT retail
-- Be conservative - account for negotiation room and platform fees
-- Consider: brand recognition, visible condition, age, market demand
-- If unable to estimate confidently, use valueConfidence: "low"`;
-  }
-
-  private getPremiumPrompt(): string {
-    return `Analyze this item image and return JSON with these fields:
-{
-  "name": "Short descriptive name for the item",
-  "description": "Brief description of the item",
-  "category": "Category (Electronics, Clothing, Furniture, Collectibles, Books, Tools, Kitchen, Sports, Toys, Other)",
-  "tags": ["relevant", "searchable", "tags"],
-  "confidence": 0.0-1.0,
-  "estimatedValue": "USD resale value as decimal string (e.g., '45.00')",
-  "valueConfidence": "low|medium|high",
-  "valueRationale": "Brief 1-sentence explanation of the valuation"
-}
-
-For value estimation, consider these factors:
-1. Brand Recognition - Known brands command higher prices
-2. Condition Assessment - Visible wear, damage, or pristine state
-3. Age & Vintage Status - Newer items vs collectible vintage
-4. Market Demand - Current popularity and seasonal factors
-5. Completeness - Missing parts or accessories reduce value
-6. Rarity & Collectibility - Limited editions or discontinued items
-
-Price guidance by category:
-- Electronics: Depreciate 20-50% from retail, more for older tech
-- Clothing: 10-30% of retail unless designer/vintage
-- Furniture: 20-40% of retail, condition critical
-- Collectibles: Research comparable sales carefully
-- Books: Usually $1-10 unless rare/signed
-- Tools: Hold value well if quality brand, 40-60% of retail
-
-Base on secondary market prices (eBay sold listings, Craigslist, Facebook Marketplace), NOT retail.
-Be conservative - account for negotiation room and platform fees.`;
   }
 }
 
 /**
- * Mock analyzer for testing
+ * Normalize a model's identification JSON. Only known fields are read, so any
+ * price-like fields the model volunteers are dropped.
+ */
+export function parseIdentification(
+  parsed: Record<string, unknown>,
+  defaultConfidence: number
+): Omit<IdentificationResult, "model" | "promptVersion" | "raw"> {
+  const tags = Array.isArray(parsed.tags)
+    ? parsed.tags
+        .filter((tag): tag is string => typeof tag === "string")
+        .map((tag) => tag.trim().toLowerCase())
+        .filter(Boolean)
+    : [];
+
+  return {
+    name: cleanText(parsed.name, 120) || "Item",
+    description: stripMonetarySentences(cleanText(parsed.description, 1000)) || "Unknown item",
+    category: cleanText(parsed.category, 60) || "Uncategorized",
+    tags: Array.from(new Set(tags)).slice(0, 10),
+    confidence:
+      typeof parsed.confidence === "number" && Number.isFinite(parsed.confidence)
+        ? Math.min(1, Math.max(0, parsed.confidence))
+        : defaultConfidence,
+    notes: stripMonetarySentences(cleanText(parsed.uncertaintyNotes, 500)) || null,
+    alternatives: Array.isArray(parsed.possibleAlternatives)
+      ? parsed.possibleAlternatives
+          .filter((alt): alt is string => typeof alt === "string" && alt.trim() !== "")
+          .map((alt) => alt.trim())
+          .slice(0, 3)
+      : [],
+  };
+}
+
+/** Map identification confidence to the uncertainty level shown to users */
+export function confidenceToUncertainty(confidence: number): "low" | "medium" | "high" {
+  if (confidence >= 0.75) {
+    return "low";
+  }
+  if (confidence >= 0.45) {
+    return "medium";
+  }
+  return "high";
+}
+
+const MONEY_PATTERN = /(\$\s?\d)|(\b\d[\d,.]*\s?(usd|dollars?)\b)|\b(worth|valued at|resale value|sells? for)\b/i;
+
+/** Remove sentences that state a price or value; identification must not carry money */
+export function stripMonetarySentences(text: string): string {
+  if (!text) {
+    return text;
+  }
+  return text
+    .split(/(?<=[.!?])\s+/)
+    .filter((sentence) => !MONEY_PATTERN.test(sentence))
+    .join(" ")
+    .trim();
+}
+
+function cleanText(value: unknown, maxLength: number): string {
+  return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+export async function requestJson(
+  client: OpenAI,
+  model: string,
+  images: Buffer[],
+  prompt: string
+): Promise<{ parsed: Record<string, unknown>; response: unknown }> {
+  if (images.length === 0) {
+    throw new Error("At least one image is required");
+  }
+
+  const response = await client.chat.completions.create({
+    model,
+    messages: [
+      {
+        role: "user",
+        content: [
+          ...images.slice(0, MAX_AI_IMAGES).map((image) => ({
+            type: "image_url" as const,
+            image_url: {
+              url: `data:${detectImageMime(image)};base64,${image.toString("base64")}`,
+            },
+          })),
+          {
+            type: "text" as const,
+            text: prompt,
+          },
+        ],
+      },
+    ],
+    response_format: { type: "json_object" },
+    max_tokens: 1000,
+    temperature: 0,
+    seed: 42,
+  });
+
+  const content = response.choices[0]?.message?.content;
+  if (!content) {
+    throw new Error("No response from AI");
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    throw new Error("AI returned invalid JSON");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("AI returned an unexpected response shape");
+  }
+
+  return { parsed: parsed as Record<string, unknown>, response };
+}
+
+function detectImageMime(image: Buffer): string {
+  if (image.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+    return "image/png";
+  }
+  if (
+    image.subarray(0, 4).toString("ascii") === "RIFF" &&
+    image.subarray(8, 12).toString("ascii") === "WEBP"
+  ) {
+    return "image/webp";
+  }
+  return "image/jpeg";
+}
+
+function getIdentifyPrompt(): string {
+  return `You are identifying a physical item for a personal home inventory. All attached photos show the same item.
+
+Return JSON with exactly these fields:
+{
+  "name": "Short, specific name. Include brand or model only if visible or clearly recognizable.",
+  "description": "1-2 sentences describing what is visible: material, color, notable features, visible condition.",
+  "category": "One of: ${CATEGORIES.join(", ")}",
+  "tags": ["3-8", "lowercase", "searchable", "tags"],
+  "confidence": 0.0-1.0 (how sure you are about what the item is),
+  "uncertaintyNotes": "null, or one sentence on what is uncertain and what photo would help (e.g. 'Maker's mark not visible; a photo of the underside would help.')",
+  "possibleAlternatives": ["up to 3 other plausible identifications; empty if confident"]
+}
+
+Rules:
+- Identify only. Do not estimate price, value, or worth, and do not mention money.
+- Do not invent brands, models, makers, dates, or origins that are not visible or clearly recognizable. Prefer an accurate generic name ("Hand-thrown ceramic bowl") over a guessed specific one.
+- Name ordinary natural objects plainly (e.g. "River rock", "Pinecone").
+- If the photo is unclear, say so in uncertaintyNotes and lower confidence.`;
+}
+
+/**
+ * Mock analyzer for local runs without OpenAI (ANALYZER_PROVIDER=mock)
  * Returns deterministic results without making API calls
  */
 export class MockAnalyzer implements IAnalyzer {
@@ -231,16 +289,17 @@ export class MockAnalyzer implements IAnalyzer {
     supportsMultiItem: false,
   };
 
-  async analyze(_imageBuffer: Buffer): Promise<AnalysisResult> {
+  async identify(_images: Buffer[]): Promise<IdentificationResult> {
     return {
       name: "Mock Item",
       description: "Mock description for testing",
       category: "Test",
       tags: ["mock", "test"],
       confidence: 1.0,
-      estimatedValue: "25.00",
-      valueConfidence: "high",
-      valueRationale: "Mock valuation for testing",
+      notes: null,
+      alternatives: [],
+      model: "mock",
+      promptVersion: IDENTIFY_PROMPT_VERSION,
       raw: null,
     };
   }

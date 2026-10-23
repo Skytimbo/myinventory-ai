@@ -40,7 +40,7 @@ describe("ItemService", () => {
   });
 
   describe("createItem", () => {
-    it("should create an item with AI analysis", async () => {
+    it("should create an item with AI identification and no valuation", async () => {
       const file = makeFile();
       const result = await service.createItem({ files: [file] });
 
@@ -48,7 +48,15 @@ describe("ItemService", () => {
       expect(result.item.description).toBe("Test description");
       expect(result.item.category).toBe("Test");
       expect(result.item.tags).toEqual(["test"]);
-      expect(result.item.estimatedValue).toBe("10.00");
+      expect(result.item.identification).toMatchObject({
+        confidence: 1,
+        uncertainty: "low",
+        model: "fake",
+        promptVersion: "identify-test",
+      });
+      expect(result.item.valuation).toBeNull();
+      expect(result.item.estimatedValue ?? null).toBeNull();
+      expect(result.item.valueConfidence ?? null).toBeNull();
       expect(result.aiWarning).toBeNull();
     });
 
@@ -59,8 +67,10 @@ describe("ItemService", () => {
       expect(result.item.name).toBe("Untitled Item");
       expect(result.item.description).toBe("");
       expect(result.item.category).toBe("Uncategorized");
-      expect(result.item.estimatedValue).toBeNull();
-      expect(result.aiWarning).toBe("Quick capture - not yet analyzed");
+      expect(result.item.estimatedValue ?? null).toBeNull();
+      expect(result.item.identification).toBeNull();
+      expect(result.item.analysisMetadata?.model).toBe("none");
+      expect(result.aiWarning).toBe("Quick capture - not yet identified");
     });
 
     it("should save image to object storage", async () => {
@@ -94,7 +104,7 @@ describe("ItemService", () => {
     });
 
     it("should return aiWarning when analyzer throws", async () => {
-      vi.spyOn(analyzer, "analyze").mockRejectedValueOnce(
+      vi.spyOn(analyzer, "identify").mockRejectedValueOnce(
         new Error("API unavailable"),
       );
       // Suppress expected console.error
@@ -104,7 +114,9 @@ describe("ItemService", () => {
       const result = await service.createItem({ files: [file] });
 
       expect(result.item.name).toBe("Item");
-      expect(result.aiWarning).toContain("AI analysis unavailable");
+      expect(result.item.identification).toBeNull();
+      expect(result.item.analysisMetadata?.note).toContain("unavailable");
+      expect(result.aiWarning).toContain("AI identification unavailable");
     });
 
     it("should reject invalid file types", async () => {
@@ -126,9 +138,8 @@ describe("ItemService", () => {
     });
   });
 
-  describe("analyzeItem", () => {
-    it("should analyze an existing item and update it", async () => {
-      // First create an item in Quick Capture mode
+  describe("identifyItem", () => {
+    it("should identify a Quick Capture item and update it", async () => {
       const file = makeFile();
       const { item } = await service.createItem({
         files: [file],
@@ -136,16 +147,97 @@ describe("ItemService", () => {
       });
       expect(item.name).toBe("Untitled Item");
 
-      // Now analyze it
-      const updated = await service.analyzeItem(item.id);
+      const updated = await service.identifyItem(item.id);
 
       expect(updated.name).toBe("Test Item");
       expect(updated.description).toBe("Test description");
       expect(updated.category).toBe("Test");
+      expect(updated.identification?.promptVersion).toBe("identify-test");
+      expect(updated.analysisMetadata?.imageHash).toMatch(/^[0-9a-f]{64}$/);
+      expect(updated.valuation).toBeNull();
+    });
+
+    it("should preserve location and legacy valuation data", async () => {
+      const { item } = await service.createItem({ files: [makeFile()], location: "Garage" });
+      await storage.updateItem(item.id, {
+        estimatedValue: "125.00",
+        valueConfidence: "medium",
+        valueRationale: "Legacy combined analysis",
+      });
+
+      const updated = await service.identifyItem(item.id);
+
+      expect(updated.location).toBe("Garage");
+      expect(updated.estimatedValue).toBe("125.00");
+      expect(updated.valueConfidence).toBe("medium");
+      expect(updated.valueRationale).toBe("Legacy combined analysis");
+    });
+
+    it("should mark an existing valuation stale but keep its amounts", async () => {
+      const { item } = await service.createItem({ files: [makeFile()] });
+      const valuation = {
+        status: "estimated" as const,
+        marketability: "marketable" as const,
+        marketabilityReason: "Test",
+        currency: "USD" as const,
+        low: "5.00",
+        likely: "8.00",
+        high: "10.00",
+        confidence: "medium" as const,
+        rationale: "Test",
+        missingInformation: [],
+        evidence: { basis: "model_judgment" as const, note: "No marketplace data was retrieved." },
+        basedOn: { name: "Test Item", category: "Test", identifiedAt: null },
+        model: "fake",
+        evaluatedAt: "2026-10-23T00:00:00.000Z",
+        promptVersion: "valuation-test",
+        staleAt: null,
+        staleReason: null,
+      };
+      await storage.updateItem(item.id, { valuation });
+
+      // Same name and category: still stale, AI judgment is not used to decide
+      const updated = await service.identifyItem(item.id);
+
+      expect(updated.valuation).toMatchObject({
+        likely: "8.00",
+        staleReason: "reidentified",
+      });
+      expect(updated.valuation?.staleAt).toEqual(expect.any(String));
+
+      const staleAt = updated.valuation?.staleAt;
+      const again = await service.identifyItem(item.id);
+      expect(again.valuation?.staleAt).toBe(staleAt);
+    });
+
+    it("should send up to four of the item's images, primary first", async () => {
+      const files = Array.from({ length: 5 }, (_, i) =>
+        makeFile({
+          buffer: Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, i]), Buffer.alloc(100)]),
+        })
+      );
+      const { item } = await service.createItem({ files, skipAI: true });
+      const identify = vi.spyOn(analyzer, "identify");
+
+      await service.identifyItem(item.id);
+
+      const images = identify.mock.calls[0][0];
+      expect(images).toHaveLength(4);
+      expect(images[0]).toEqual(files[0].buffer);
+    });
+
+    it("should leave the item unchanged when identification fails", async () => {
+      const { item } = await service.createItem({ files: [makeFile()], location: "Attic" });
+      const before = structuredClone(await storage.getItem(item.id));
+      vi.spyOn(analyzer, "identify").mockRejectedValueOnce(new Error("API unavailable"));
+
+      await expect(service.identifyItem(item.id)).rejects.toThrow("API unavailable");
+
+      expect(await storage.getItem(item.id)).toEqual(before);
     });
 
     it("should throw if item not found", async () => {
-      await expect(service.analyzeItem("nonexistent-id")).rejects.toThrow(
+      await expect(service.identifyItem("nonexistent-id")).rejects.toThrow(
         "Item not found",
       );
     });

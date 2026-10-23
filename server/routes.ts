@@ -259,39 +259,27 @@ export async function registerRoutes(
     })
   );
 
-  // POST /api/items/:id/analyze - Analyze existing item (Quick Capture)
-  app.post(
-    "/api/items/:id/analyze",
-    aiRateLimit,
-    wrap(async (req, res) => {
-      try {
-        const item = await itemService.analyzeItem(req.params.id);
-        res.json(item);
-      } catch (err: any) {
-        if (err.message === "Item not found") {
-          throw new ApiError(404, "NOT_FOUND", "Item not found");
-        }
-        throw new ApiError(500, "ANALYSIS_FAILED", err.message);
+  // POST /api/items/:id/identify - Identify (or re-identify) an item from its photos.
+  // /analyze and /reanalyze are kept as aliases for older clients.
+  const identifyHandler = wrap(async (req, res) => {
+    try {
+      const item = await itemService.identifyItem(req.params.id);
+      res.json(item);
+    } catch (err: any) {
+      if (err.message === "Item not found") {
+        throw new ApiError(404, "NOT_FOUND", "Item not found");
       }
-    })
-  );
-
-  // POST /api/items/:id/reanalyze - Re-run AI analysis on existing item
-  app.post(
-    "/api/items/:id/reanalyze",
-    aiRateLimit,
-    wrap(async (req, res) => {
-      try {
-        const item = await itemService.analyzeItem(req.params.id);
-        res.json(item);
-      } catch (err: any) {
-        if (err.message === "Item not found") {
-          throw new ApiError(404, "NOT_FOUND", "Item not found");
-        }
-        throw new ApiError(500, "REANALYSIS_FAILED", err.message);
-      }
-    })
-  );
+      console.error("Identify failed:", err);
+      throw new ApiError(
+        502,
+        "IDENTIFY_FAILED",
+        "Identification failed. The item was not changed. Please try again."
+      );
+    }
+  });
+  app.post("/api/items/:id/identify", aiRateLimit, identifyHandler);
+  app.post("/api/items/:id/analyze", aiRateLimit, identifyHandler);
+  app.post("/api/items/:id/reanalyze", aiRateLimit, identifyHandler);
 
   // ============================================================
   // Object Storage Endpoint

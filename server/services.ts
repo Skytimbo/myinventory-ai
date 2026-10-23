@@ -17,7 +17,7 @@ import { promises as fs } from "fs";
 import type { Response } from "express";
 import type { IStorage } from "./storage";
 import type { IObjectStorage } from "./objectStorage";
-import type { IAnalyzer, AnalysisResult } from "./analyzer";
+import type { IAnalyzer, IdentificationResult } from "./analyzer";
 import type { IItemService } from "./itemService";
 import { openaiCheap, openaiPremium } from "./openai";
 import type { InventoryItem, InsertInventoryItem } from "@shared/schema";
@@ -467,16 +467,17 @@ export class FakeAnalyzer implements IAnalyzer {
     supportsMultiItem: false,
   };
 
-  async analyze(_imageBuffer: Buffer): Promise<AnalysisResult> {
+  async identify(_images: Buffer[]): Promise<IdentificationResult> {
     return {
       name: "Test Item",
       description: "Test description",
       category: "Test",
       tags: ["test"],
       confidence: 1.0,
-      estimatedValue: "10.00",
-      valueConfidence: "high",
-      valueRationale: "Test valuation",
+      notes: null,
+      alternatives: [],
+      model: "fake",
+      promptVersion: "identify-test",
       raw: null,
     };
   }

@@ -2,9 +2,13 @@
  * ItemService - Business Logic Layer (Architecture Refactoring)
  *
  * This module extracts business logic from routes.ts into a dedicated service:
- * - Item creation with AI analysis
- * - Quick Capture mode (skip AI, analyze later)
+ * - Item creation with AI identification
+ * - Quick Capture mode (skip AI, identify later)
+ * - Re-identification of existing items
  * - Item CRUD operations
+ *
+ * Identification never writes monetary values. The legacy estimated_value /
+ * value_confidence / value_rationale columns are never written here.
  *
  * Follows Single Responsibility Principle:
  * - Routes handle HTTP concerns only
@@ -16,9 +20,14 @@
 import { randomUUID, createHash } from "crypto";
 import type { IStorage } from "./storage";
 import type { IObjectStorage } from "./objectStorage";
-import type { IAnalyzer, AnalysisResult } from "./analyzer";
+import {
+  confidenceToUncertainty,
+  MAX_AI_IMAGES,
+  type IAnalyzer,
+  type IdentificationResult,
+} from "./analyzer";
 import { validateUploadedFile } from "./fileValidation";
-import type { InventoryItem } from "@shared/schema";
+import type { Identification, InventoryItem } from "@shared/schema";
 
 // MIME type to file extension mapping
 const mimeToExt: Record<string, string> = {
@@ -53,7 +62,7 @@ export interface CreateItemResult {
  */
 export interface IItemService {
   createItem(options: CreateItemOptions): Promise<CreateItemResult>;
-  analyzeItem(itemId: string): Promise<InventoryItem>;
+  identifyItem(itemId: string): Promise<InventoryItem>;
   getItem(id: string): Promise<InventoryItem | undefined>;
   getItems(): Promise<InventoryItem[]>;
   deleteItem(id: string): Promise<boolean>;
@@ -75,10 +84,10 @@ export class ItemService implements IItemService {
   ) {}
 
   /**
-   * Create a new inventory item with optional AI analysis
+   * Create a new inventory item with optional AI identification
    *
    * @param options.files - Uploaded image files (at least one required)
-   * @param options.skipAI - If true, skip AI analysis (Quick Capture mode)
+   * @param options.skipAI - If true, skip AI identification (Quick Capture mode)
    * @param options.location - Optional location string
    * @returns Created item and any AI warning message
    */
@@ -96,18 +105,22 @@ export class ItemService implements IItemService {
     // Generate item ID
     const itemId = randomUUID();
 
-    // Run AI analysis (or skip for Quick Capture)
-    const analysisStart = Date.now();
-    const { analysis, aiWarning } = await this.getAnalysis(files[0], skipAI);
-    const latencyMs = Date.now() - analysisStart;
+    // Run AI identification (or skip for Quick Capture)
+    const identifyStart = Date.now();
+    const { result, aiWarning } = await this.getIdentification(
+      files.map((file) => file.buffer),
+      skipAI
+    );
+    const latencyMs = Date.now() - identifyStart;
+    const identifiedAt = new Date().toISOString();
 
     // Compute image hash for traceability
     const imageHash = files[0].buffer ? hashBuffer(files[0].buffer) : undefined;
 
     const analysisMetadata = {
-      model: skipAI ? "none" : "openai",
-      timestamp: new Date().toISOString(),
-      version: "v1",
+      model: skipAI ? "none" : result?.model ?? "openai",
+      timestamp: identifiedAt,
+      version: "v3",
       imageHash,
       latencyMs,
       note: aiWarning || null,
@@ -119,68 +132,78 @@ export class ItemService implements IItemService {
     // Generate barcode
     const barcodeData = `INV-${Date.now()}-${randomUUID().slice(0, 8).toUpperCase()}`;
 
-    // Create database record
+    const details = result
+      ? identificationToItemFields(result)
+      : skipAI
+        ? { name: "Untitled Item", description: "", category: "Uncategorized", tags: [] }
+        : {
+            name: "Item",
+            description: "AI identification unavailable.",
+            category: "Uncategorized",
+            tags: [],
+          };
+
+    // Create database record. Valuation is never set at creation.
     const item = await this.storage.createItem({
-      name: analysis.name,
-      description: analysis.description,
-      category: analysis.category,
-      tags: analysis.tags,
+      ...details,
       imageUrl: imageUrls[0],
       imageUrls: imageUrls,
       barcodeData,
-      estimatedValue: analysis.estimatedValue,
-      valueConfidence: analysis.valueConfidence,
-      valueRationale: analysis.valueRationale,
       location,
       analysisMetadata,
+      identification: result ? toIdentification(result, identifiedAt) : null,
+      valuation: null,
     });
 
     return { item, aiWarning };
   }
 
   /**
-   * Analyze an existing item (for Quick Capture mode)
+   * Identify (or re-identify) an existing item from its photos
    *
-   * Reads the item's primary image and runs AI analysis,
-   * then updates the item with the results.
+   * Updates name, description, category, tags, and identification. Leaves
+   * location and all valuation data intact, except that an existing
+   * valuation is marked stale because it was based on the earlier
+   * identification. If the AI call fails nothing is written.
    *
-   * @param itemId - ID of the item to analyze
-   * @returns Updated item with AI-generated metadata
-   * @throws Error if item not found or analysis fails
+   * @throws Error("Item not found") or the AI error
    */
-  async analyzeItem(itemId: string): Promise<InventoryItem> {
+  async identifyItem(itemId: string): Promise<InventoryItem> {
     const item = await this.storage.getItem(itemId);
     if (!item) {
       throw new Error("Item not found");
     }
 
-    // Read image from storage
-    const imageBuffer = await this.objectStorage.read(item.imageUrl);
+    const images = await this.readItemImages(item);
 
-    // Run AI analysis
-    const analysisStart = Date.now();
-    const analysis = await this.analyzer.analyze(imageBuffer);
-    const latencyMs = Date.now() - analysisStart;
+    const identifyStart = Date.now();
+    const result = await this.analyzer.identify(images);
+    const latencyMs = Date.now() - identifyStart;
+    const identifiedAt = new Date().toISOString();
 
-    const analysisMetadata = {
-      model: "openai",
-      timestamp: new Date().toISOString(),
-      version: "v2",
-      imageHash: hashBuffer(imageBuffer),
-      latencyMs,
-      note: null,
-    };
+    // Re-read so a valuation saved while the AI call ran is not lost
+    const current = await this.storage.getItem(itemId);
+    if (!current) {
+      throw new Error("Item not found");
+    }
 
-    // Update item with AI results
+    const valuation =
+      current.valuation && !current.valuation.staleAt
+        ? { ...current.valuation, staleAt: identifiedAt, staleReason: "reidentified" }
+        : current.valuation;
+
     const updated = await this.storage.updateItem(itemId, {
-      name: analysis.name,
-      description: analysis.description,
-      category: analysis.category,
-      tags: analysis.tags,
-      estimatedValue: analysis.estimatedValue,
-      valueConfidence: analysis.valueConfidence,
-      valueRationale: analysis.valueRationale,
-      analysisMetadata,
+      ...identificationToItemFields(result),
+      identification: toIdentification(result, identifiedAt),
+      valuation,
+      analysisMetadata: {
+        model: result.model,
+        timestamp: identifiedAt,
+        version: "v3",
+        imageHash: hashBuffer(images[0]),
+        latencyMs,
+        note: null,
+      },
     });
 
     if (!updated) {
@@ -216,53 +239,39 @@ export class ItemService implements IItemService {
   // ============================================================
 
   /**
-   * Get AI analysis for an image, with fallback handling
+   * Get AI identification for new images, with fallback handling
    *
-   * @param file - Image file to analyze
-   * @param skipAI - If true, return placeholder values without calling AI
-   * @returns Analysis result and optional warning message
+   * @returns The result (null when skipped or failed) and an optional warning
    */
-  private async getAnalysis(
-    file: Express.Multer.File,
+  private async getIdentification(
+    images: Buffer[],
     skipAI: boolean
-  ): Promise<{ analysis: AnalysisResult; aiWarning: string | null }> {
+  ): Promise<{ result: IdentificationResult | null; aiWarning: string | null }> {
     if (skipAI) {
-      return {
-        analysis: {
-          name: "Untitled Item",
-          description: "",
-          category: "Uncategorized",
-          tags: [],
-          confidence: 0,
-          estimatedValue: null,
-          valueConfidence: null,
-          valueRationale: null,
-          raw: null,
-        },
-        aiWarning: "Quick capture - not yet analyzed",
-      };
+      return { result: null, aiWarning: "Quick capture - not yet identified" };
     }
 
     try {
-      const analysis = await this.analyzer.analyze(file.buffer);
-      return { analysis, aiWarning: null };
+      return { result: await this.analyzer.identify(images), aiWarning: null };
     } catch (err) {
-      console.error("AI analysis failed:", err);
+      console.error("AI identification failed:", err);
       return {
-        analysis: {
-          name: "Item",
-          description: "AI analysis temporarily unavailable.",
-          category: "Uncategorized",
-          tags: [],
-          confidence: 0,
-          estimatedValue: null,
-          valueConfidence: null,
-          valueRationale: null,
-          raw: null,
-        },
-        aiWarning: "AI analysis unavailable. Please update details manually.",
+        result: null,
+        aiWarning: "AI identification unavailable. Use Identify to try again.",
       };
     }
+  }
+
+  /**
+   * Read up to MAX_AI_IMAGES of an item's photos, primary image first
+   */
+  private async readItemImages(item: InventoryItem): Promise<Buffer[]> {
+    const urls = item.imageUrls?.length ? item.imageUrls : [item.imageUrl];
+    const images: Buffer[] = [];
+    for (const url of urls.slice(0, MAX_AI_IMAGES)) {
+      images.push(await this.objectStorage.read(url));
+    }
+    return images;
   }
 
   /**
@@ -296,4 +305,25 @@ export class ItemService implements IItemService {
 
     return imageUrls;
   }
+}
+
+function identificationToItemFields(result: IdentificationResult) {
+  return {
+    name: result.name,
+    description: result.description,
+    category: result.category,
+    tags: result.tags,
+  };
+}
+
+function toIdentification(result: IdentificationResult, identifiedAt: string): Identification {
+  return {
+    confidence: result.confidence,
+    uncertainty: confidenceToUncertainty(result.confidence),
+    notes: result.notes,
+    alternatives: result.alternatives,
+    model: result.model,
+    identifiedAt,
+    promptVersion: result.promptVersion,
+  };
 }
