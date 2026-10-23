@@ -18,3 +18,7 @@ yarn.lock
 
 # graphify knowledge-graph output (generated, local only)
 graphify-out/
+
+# Real-photo AI evaluation (local only: personal photos and raw model output)
+ai-eval-photos/
+ai-eval-results/

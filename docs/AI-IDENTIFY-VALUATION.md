@@ -96,15 +96,56 @@ Backups include both columns (archive schema version `0003_identify_valuation`).
 
 ## Manual evaluation with real photos
 
-Automated tests use synthetic, mocked model responses. They prove the server enforces the contract, not that the model judges real photos well. To check real behaviour:
+Automated tests use synthetic, mocked model responses. They prove the server enforces the contract, not that the model judges real photos well. `pnpm ai:eval` runs the real Identify and Estimate Value prompts on your photos.
 
-```bash
-# photos/<item-name>/*.jpg, optionally photos/<item-name>/expected-status.txt
-pnpm ai:eval photos/           # real OpenAI calls, a few cents per item
-pnpm ai:eval photos/ --mock    # plumbing check only
+### What it can and cannot touch
+
+- It reads OpenAI settings from the **shell environment only**: `OPENAI_API_KEY`, `OPENAI_PROJECT_ID` (required for `sk-proj-` keys), and optionally `OPENAI_BASE_URL`. It does **not** load `.env`, so `DATABASE_URL` and other app settings never enter the process.
+- It imports only the analyzer and the OpenAI SDK. No database, storage, or migration code is reachable, which `server/tests/aiEval.spec.ts` checks.
+- It reads photos and writes only to `--out`. Inside the repository, `--out` must be under `ai-eval-results/` (gitignored). It may also point outside the repository, but never inside `uploads/` or `LOCAL_STORAGE_DIR`.
+- API keys are redacted from everything it prints or saves, including OpenAI's masked key in `401` errors.
+
+### Prepare photos
+
+Put photos in `ai-eval-photos/` (gitignored), one folder per item, 1–4 photos each (`.jpg`, `.jpeg`, `.png`, `.webp`). An optional `expected-status.txt` holds `estimated`, `nonmarketable`, or `insufficient_information`.
+
+```text
+ai-eval-photos/
+  river-rock/        1.jpg               expected-status.txt -> nonmarketable
+  dewalt-drill/      1.jpg 2.jpg         expected-status.txt -> estimated
+  plain-mug/         1.jpg
+  stoneware-crock/   1.jpg 2.jpg 3.jpg   expected-status.txt -> insufficient_information
 ```
 
-It reads no database and writes nothing. Suggested set: an ordinary river rock (`nonmarketable`), a branded power tool (`estimated`), a plain mug (`estimated` or `nonmarketable`), and an antique without visible marks (`insufficient_information`).
+### Supply a temporary test key
+
+Use a separate, low-limit key created for this test (OpenAI dashboard → API keys), not the production key. Enter it into the current shell only, so it is not saved in a file or in shell history:
+
+```bash
+read -rs "OPENAI_API_KEY?OpenAI test key: " && export OPENAI_API_KEY   # zsh; in bash: read -rsp "OpenAI test key: " OPENAI_API_KEY
+export OPENAI_PROJECT_ID=proj_...    # only for sk-proj- keys; this is an ID, not a secret
+```
+
+Do not put the test key in `.env`, `.env.example`, or any tracked file. When finished, run `unset OPENAI_API_KEY OPENAI_PROJECT_ID`, close the terminal, and revoke the test key in the OpenAI dashboard.
+
+### Run
+
+```bash
+pnpm ai:eval ai-eval-photos --mock --out    # free plumbing check first
+pnpm ai:eval ai-eval-photos --out           # real calls: roughly 2-3 per item
+pnpm ai:eval ai-eval-photos --identify-only --out   # Identify only, no valuation
+```
+
+`--out` with no directory writes to `ai-eval-results/run-<timestamp>/results.json`. Each run gets a new directory; earlier runs are never overwritten. The file records:
+
+- the run: timestamps, mode, model names, prompt/contract versions (`identify-v1`, `valuation-v1`), and a credential-free description of the configuration;
+- per item (identified by folder name): photo file names, sizes, and SHA-256 hashes;
+- **Identify** and **Estimate Value** as separate actions, each with timestamps, model, prompt version, parsed result, and error;
+- every raw OpenAI request and response, labelled by action. Image data is replaced by MIME type, size, and hash.
+
+If OpenAI rejects the key (`401`/`403`), the run stops and the remaining items are marked skipped. The command exits with status 1 if any item failed, any result mismatched `expected-status.txt`, or the run stopped early. A rejected valuation (for example a $0 estimate or a status that contradicts marketability) is recorded as an `InvalidValuationError`, with the raw response kept for review.
+
+Suggested set: an ordinary river rock (`nonmarketable`), a branded power tool (`estimated`), a plain mug (`estimated` or `nonmarketable`), and an antique without visible marks (`insufficient_information`).
 
 ## Production deployment runbook
 

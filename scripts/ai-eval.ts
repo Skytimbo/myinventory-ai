@@ -1,123 +1,78 @@
-import "dotenv/config";
-
-import { promises as fs } from "fs";
 import path from "path";
+import OpenAI from "openai";
 import {
-  confidenceToUncertainty,
-  MockAnalyzer,
-  OpenAIAnalyzer,
-  type IAnalyzer,
-} from "../server/analyzer";
+  loadOpenAIConfig,
+  parseArgs,
+  redactSecrets,
+  resolveOutDir,
+  runEvaluation,
+  writeResults,
+} from "./ai-eval-lib";
 
 /**
  * Manual Identify / Estimate Value evaluation against real photos.
  *
  * Usage:
- *   pnpm ai:eval <photos-dir>          # real OpenAI calls (costs a few cents per item)
- *   pnpm ai:eval <photos-dir> --mock   # plumbing check, no API calls
+ *   pnpm ai:eval <photos-dir> [--out [dir]] [--identify-only] [--mock]
  *
  * <photos-dir> contains one subdirectory per item, each holding 1-4 photos
- * (.jpg/.jpeg/.png/.webp) of that item. An optional expected-status.txt
- * holds the expected valuation status (estimated, nonmarketable, or
- * insufficient_information) and is compared against the result.
+ * (.jpg/.jpeg/.png/.webp) of that item. An optional expected-status.txt holds
+ * the expected valuation status (estimated, nonmarketable, or
+ * insufficient_information).
  *
- * Reads no database and writes nothing; it only calls the analyzer.
+ * OpenAI settings come from the shell environment only (OPENAI_API_KEY,
+ * OPENAI_PROJECT_ID, OPENAI_BASE_URL); .env is not loaded. With --out, a
+ * redacted results.json (raw responses, parsed results, errors) is written
+ * under ai-eval-results/ (gitignored) by default.
+ *
+ * Exits 1 if any item failed or mismatched its expected status.
  */
-
-const IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".webp"]);
-
 async function main() {
-  const [dirArg, ...flags] = process.argv.slice(2);
-  if (!dirArg) {
-    throw new Error("Usage: pnpm ai:eval <photos-dir> [--mock]");
-  }
+  const args = parseArgs(process.argv.slice(2));
+  const config = args.mock ? null : loadOpenAIConfig(process.env);
+  const secrets = config ? [config.apiKey] : [];
+  const outDir = args.outDir
+    ? resolveOutDir(args.outDir, {
+        cwd: process.cwd(),
+        storageDir: process.env.LOCAL_STORAGE_DIR || undefined,
+      })
+    : null;
 
-  const analyzer = await createAnalyzer(flags.includes("--mock"));
-  const root = path.resolve(process.cwd(), dirArg);
-  const entries = (await fs.readdir(root, { withFileTypes: true }))
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .sort();
-
-  if (entries.length === 0) {
-    throw new Error(`No item subdirectories found in ${root}`);
-  }
-
-  let mismatches = 0;
-  for (const name of entries) {
-    const itemDir = path.join(root, name);
-    const files = (await fs.readdir(itemDir))
-      .filter((file) => IMAGE_EXTENSIONS.has(path.extname(file).toLowerCase()))
-      .sort();
-    if (files.length === 0) {
-      console.log(`\n## ${name}: skipped (no photos)`);
-      continue;
-    }
-
-    const images = await Promise.all(files.map((file) => fs.readFile(path.join(itemDir, file))));
-    const expected = await readExpectedStatus(itemDir);
-
-    console.log(`\n## ${name} (${files.length} photo(s))`);
-    try {
-      const identification = await analyzer.identify(images);
-      console.log(
-        `Identify: ${identification.name} [${identification.category}] ` +
-          `uncertainty=${confidenceToUncertainty(identification.confidence)} model=${identification.model}`
-      );
-      if (identification.notes) console.log(`  notes: ${identification.notes}`);
-      if (identification.alternatives.length) {
-        console.log(`  alternatives: ${identification.alternatives.join("; ")}`);
+  const clients = config
+    ? {
+        cheap: new OpenAI({ apiKey: config.apiKey, project: config.projectId, baseURL: config.baseURL }),
+        premium: new OpenAI({ apiKey: config.apiKey, project: config.projectId, baseURL: config.baseURL }),
       }
+    : undefined;
 
-      const valuation = await analyzer.estimateValue({
-        images,
-        name: identification.name,
-        description: identification.description,
-        category: identification.category,
-        identificationNotes: identification.notes,
-      });
-      const range =
-        valuation.status === "estimated"
-          ? ` $${valuation.low}-$${valuation.high} (likely $${valuation.likely}, ${valuation.confidence})`
-          : "";
-      console.log(`Estimate: ${valuation.status}${range} marketability=${valuation.marketability}`);
-      console.log(`  reason: ${valuation.marketabilityReason}`);
-      console.log(`  rationale: ${valuation.rationale}`);
-      if (valuation.missingInformation.length) {
-        console.log(`  would help: ${valuation.missingInformation.join("; ")}`);
-      }
+  const run = await runEvaluation({
+    photosDir: path.resolve(process.cwd(), args.photosDir),
+    identifyOnly: args.identifyOnly,
+    clients,
+    config,
+    log: (line) => console.log(redactSecrets(line, secrets)),
+  });
 
-      if (expected) {
-        const ok = expected === valuation.status;
-        if (!ok) mismatches += 1;
-        console.log(`  expected ${expected}: ${ok ? "MATCH" : "MISMATCH"}`);
-      }
-    } catch (error) {
-      mismatches += 1;
-      console.log(`  FAILED: ${error instanceof Error ? error.message : String(error)}`);
-    }
+  const { items, failures, mismatches, skipped } = run.summary;
+  console.log(
+    `\nDone (${run.mode}). ${items} item(s): ${failures} failure(s), ${mismatches} mismatch(es), ${skipped} skipped.`
+  );
+  if (run.abortedReason) {
+    console.log(`Aborted: ${run.abortedReason}.`);
   }
 
-  console.log(`\nDone. ${mismatches} mismatch(es) or failure(s) across ${entries.length} item(s).`);
-}
-
-async function createAnalyzer(mock: boolean): Promise<IAnalyzer> {
-  if (mock) {
-    return new MockAnalyzer();
+  if (outDir) {
+    const file = await writeResults(outDir, run, secrets);
+    console.log(`Results written to ${file}`);
   }
-  const { openaiCheap, openaiPremium } = await import("../server/openai");
-  return new OpenAIAnalyzer(openaiCheap, openaiPremium);
-}
 
-async function readExpectedStatus(itemDir: string): Promise<string | null> {
-  try {
-    return (await fs.readFile(path.join(itemDir, "expected-status.txt"), "utf8")).trim() || null;
-  } catch {
-    return null;
+  if (failures > 0 || mismatches > 0 || run.abortedReason) {
+    process.exitCode = 1;
   }
 }
 
 main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : error);
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(redactSecrets(message, [process.env.OPENAI_API_KEY ?? ""]));
   process.exit(1);
 });
