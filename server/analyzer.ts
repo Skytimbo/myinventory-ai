@@ -15,6 +15,11 @@ import type OpenAI from "openai";
 export const IDENTIFY_PROMPT_VERSION = "identify-v1";
 export const IDENTIFY_MODEL_CHEAP = "gpt-4o-mini";
 export const IDENTIFY_MODEL_PREMIUM = "gpt-4o";
+export const VALUATION_PROMPT_VERSION = "valuation-v1";
+export const VALUATION_MODEL = "gpt-4o";
+
+/** Upper bound for a plausible household-inventory estimate (USD) */
+const MAX_ESTIMATE_USD = 10_000_000;
 
 /** Below this confidence the cheap model's answer is retried on the premium model */
 const PREMIUM_FALLBACK_THRESHOLD = 0.4;
@@ -70,6 +75,34 @@ export interface IdentificationResult {
   raw: unknown;
 }
 
+/** What the valuation model is told about the item */
+export interface ValuationInput {
+  images: Buffer[];
+  name: string;
+  description: string;
+  category: string;
+  identificationNotes: string | null;
+}
+
+/**
+ * Result of the Estimate Value action after server-side validation.
+ * Amounts are non-null only when status is "estimated".
+ */
+export interface ValuationResult {
+  status: "estimated" | "nonmarketable" | "insufficient_information";
+  marketability: "marketable" | "nonmarketable" | "uncertain";
+  marketabilityReason: string;
+  low: string | null;
+  likely: string | null;
+  high: string | null;
+  confidence: "low" | "medium" | "high" | null;
+  rationale: string;
+  missingInformation: string[];
+  model: string;
+  promptVersion: string;
+  raw: unknown;
+}
+
 /**
  * Strategy interface for image analysis
  * Implementations can use different AI providers (OpenAI, Claude, local models, etc.)
@@ -77,6 +110,9 @@ export interface IdentificationResult {
 export interface IAnalyzer {
   /** Identify the item shown in one or more photos of the same item */
   identify(images: Buffer[]): Promise<IdentificationResult>;
+
+  /** Assess marketability, then estimate secondhand resale value or explain why not */
+  estimateValue(input: ValuationInput): Promise<ValuationResult>;
 
   /** Query what this analyzer supports */
   readonly capabilities: AnalyzerCapabilities;
@@ -112,6 +148,22 @@ export class OpenAIAnalyzer implements IAnalyzer {
     }
 
     return this.identifyWithModel(this.openaiPremium, IDENTIFY_MODEL_PREMIUM, images);
+  }
+
+  async estimateValue(input: ValuationInput): Promise<ValuationResult> {
+    const { parsed, response } = await requestJson(
+      this.openaiPremium,
+      VALUATION_MODEL,
+      input.images,
+      getValuationPrompt(input)
+    );
+
+    return {
+      ...parseValuation(parsed),
+      model: VALUATION_MODEL,
+      promptVersion: VALUATION_PROMPT_VERSION,
+      raw: response,
+    };
   }
 
   private async identifyWithModel(
@@ -162,6 +214,151 @@ export function parseIdentification(
           .slice(0, 3)
       : [],
   };
+}
+
+const VALUATION_STATUSES = ["estimated", "nonmarketable", "insufficient_information"] as const;
+const MARKETABILITY = ["marketable", "nonmarketable", "uncertain"] as const;
+const CONFIDENCE_LEVELS = ["low", "medium", "high"] as const;
+
+/**
+ * Validate and normalize a model's valuation JSON.
+ *
+ * Throws when the outcome is unusable (unknown status), so nothing is saved.
+ * Otherwise enforces the contract: marketability decides first, prices only
+ * accompany "estimated", zero is never a price, and claims of having checked
+ * sales data are removed.
+ */
+export function parseValuation(
+  parsed: Record<string, unknown>
+): Omit<ValuationResult, "model" | "promptVersion" | "raw"> {
+  let status = pickEnum(parsed.status, VALUATION_STATUSES);
+  if (!status) {
+    throw new Error("AI returned an invalid valuation status");
+  }
+
+  const marketability =
+    pickEnum(parsed.marketability, MARKETABILITY) ??
+    (status === "estimated"
+      ? "marketable"
+      : status === "nonmarketable"
+        ? "nonmarketable"
+        : "uncertain");
+
+  // Marketability is assessed first and wins over a contradictory status
+  if (marketability === "nonmarketable") {
+    status = "nonmarketable";
+  }
+
+  let confidence = pickEnum(parsed.confidence, CONFIDENCE_LEVELS);
+  let rationale = stripEvidenceClaims(cleanText(parsed.rationale, 1000));
+  const missingInformation = Array.isArray(parsed.missingInformation)
+    ? parsed.missingInformation
+        .filter((entry): entry is string => typeof entry === "string" && entry.trim() !== "")
+        .map((entry) => entry.trim().slice(0, 200))
+        .slice(0, 5)
+    : [];
+
+  let low: number | null = null;
+  let likely: number | null = null;
+  let high: number | null = null;
+
+  if (status === "estimated") {
+    const amounts = normalizeRange(
+      parseAmount(parsed.low),
+      parseAmount(parsed.likely),
+      parseAmount(parsed.high)
+    );
+
+    if (!amounts) {
+      // A price cannot be established; never fall back to $0
+      status = "insufficient_information";
+      rationale = [rationale, "The model did not provide a usable price range."]
+        .filter(Boolean)
+        .join(" ");
+    } else {
+      ({ low, likely, high } = amounts);
+      // Uncertain marketability or a self-contradictory range is never more than low confidence
+      confidence =
+        marketability === "uncertain" || !amounts.consistent ? "low" : confidence ?? "low";
+    }
+  }
+
+  if (status !== "estimated") {
+    confidence = null;
+  }
+
+  return {
+    status,
+    marketability,
+    marketabilityReason: stripEvidenceClaims(cleanText(parsed.marketabilityReason, 500)),
+    low: formatAmount(low),
+    likely: formatAmount(likely),
+    high: formatAmount(high),
+    confidence,
+    rationale: rationale || "Model judgment based on the photos and identification.",
+    missingInformation,
+  };
+}
+
+const EVIDENCE_CLAIM_PATTERN =
+  /\b(ebay|etsy|craigslist|facebook marketplace|worthpoint|sold listings?|completed listings?|comparable sales|comps|recent sales|auction results?|price guides?|I (checked|searched|looked up|found|reviewed))\b/i;
+
+/** Remove sentences that claim external sales data was consulted; none is retrieved */
+export function stripEvidenceClaims(text: string): string {
+  if (!text) {
+    return text;
+  }
+  return text
+    .split(/(?<=[.!?])\s+/)
+    .filter((sentence) => !EVIDENCE_CLAIM_PATTERN.test(sentence))
+    .join(" ")
+    .trim();
+}
+
+function pickEnum<T extends string>(value: unknown, allowed: readonly T[]): T | null {
+  return typeof value === "string" && (allowed as readonly string[]).includes(value)
+    ? (value as T)
+    : null;
+}
+
+function parseAmount(value: unknown): number | null {
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number.parseFloat(value.replace(/[$,\s]/g, ""))
+        : Number.NaN;
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > MAX_ESTIMATE_USD) {
+    return null;
+  }
+  return Math.round(parsed * 100) / 100;
+}
+
+function normalizeRange(
+  low: number | null,
+  likely: number | null,
+  high: number | null
+): { low: number; likely: number; high: number; consistent: boolean } | null {
+  const known = [low, likely, high].filter((value): value is number => value !== null);
+  if (known.length === 0) {
+    return null;
+  }
+
+  const ordered = known.every((value, index) => index === 0 || known[index - 1] <= value);
+  const center =
+    likely ?? (low !== null && high !== null ? (low + high) / 2 : (low ?? high)!);
+
+  // The range spans every amount given, so likely always falls inside it
+  return {
+    low: Math.min(...known),
+    likely: Math.round(center * 100) / 100,
+    high: Math.max(...known),
+    consistent: ordered,
+  };
+}
+
+function formatAmount(value: number | null): string | null {
+  return value === null ? null : value.toFixed(2);
 }
 
 /** Map identification confidence to the uncertainty level shown to users */
@@ -280,6 +477,40 @@ Rules:
 - If the photo is unclear, say so in uncertaintyNotes and lower confidence.`;
 }
 
+function getValuationPrompt(input: ValuationInput): string {
+  return `You are assessing the secondhand resale value of an item in a personal home inventory. The attached photos show the item. It was identified as:
+- Name: ${input.name}
+- Category: ${input.category}
+- Description: ${input.description || "(none)"}
+- Identification notes: ${input.identificationNotes || "(none)"}
+
+Work in this order:
+1. Marketability. Is there a realistic secondhand market where someone would pay money for this specific item? Ordinary natural objects (rocks, sticks, shells), worn-out or disposable goods, and items nobody buys used are "nonmarketable". If the item cannot be pinned down precisely enough to judge (for example an antique whose maker, age, or authenticity is not visible), use "uncertain".
+2. Then choose exactly one outcome:
+   - "estimated": marketable, and you can give a defensible range for a typical private-party used sale in the visible condition.
+   - "nonmarketable": no realistic resale market. Give no price.
+   - "insufficient_information": a value may exist but cannot be established from these photos. Give no price, and list what would be needed (e.g. "maker's mark", "model number", "photo of the underside", "professional appraisal").
+
+Return JSON with exactly these fields:
+{
+  "marketability": "marketable" | "nonmarketable" | "uncertain",
+  "marketabilityReason": "One sentence.",
+  "status": "estimated" | "nonmarketable" | "insufficient_information",
+  "low": "USD decimal string, or null",
+  "likely": "USD decimal string, or null",
+  "high": "USD decimal string, or null",
+  "confidence": "low" | "medium" | "high" | null,
+  "rationale": "1-2 sentences explaining your judgment.",
+  "missingInformation": ["what would make the estimate possible or more reliable"]
+}
+
+Rules:
+- You have NOT looked up any listings, sales, auctions, or price guides. Do not claim or imply that you checked eBay, sold listings, comparable sales, or any other data source. Describe your reasoning as your own judgment.
+- Never use 0 to mean unknown. If you cannot give a price, use null and the matching status.
+- Do not invent a price for a nonmarketable item.
+- Be conservative: private-party used prices, not retail. Prefer an honest wide range over false precision.`;
+}
+
 /**
  * Mock analyzer for local runs without OpenAI (ANALYZER_PROVIDER=mock)
  * Returns deterministic results without making API calls
@@ -300,6 +531,23 @@ export class MockAnalyzer implements IAnalyzer {
       alternatives: [],
       model: "mock",
       promptVersion: IDENTIFY_PROMPT_VERSION,
+      raw: null,
+    };
+  }
+
+  async estimateValue(_input: ValuationInput): Promise<ValuationResult> {
+    return {
+      status: "estimated",
+      marketability: "marketable",
+      marketabilityReason: "Mock marketability for testing",
+      low: "15.00",
+      likely: "25.00",
+      high: "35.00",
+      confidence: "medium",
+      rationale: "Mock valuation for testing",
+      missingInformation: [],
+      model: "mock",
+      promptVersion: VALUATION_PROMPT_VERSION,
       raw: null,
     };
   }

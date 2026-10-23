@@ -243,6 +243,116 @@ describe("ItemService", () => {
     });
   });
 
+  describe("estimateValue", () => {
+    it("should store a valuation with server-set evidence and provenance", async () => {
+      const { item } = await service.createItem({ files: [makeFile()] });
+
+      const updated = await service.estimateValue(item.id);
+
+      expect(updated.valuation).toMatchObject({
+        status: "estimated",
+        low: "5.00",
+        likely: "10.00",
+        high: "15.00",
+        currency: "USD",
+        evidence: { basis: "model_judgment" },
+        basedOn: {
+          name: "Test Item",
+          category: "Test",
+          identifiedAt: item.identification?.identifiedAt,
+        },
+        promptVersion: "valuation-test",
+        staleAt: null,
+      });
+      expect(updated.valuation?.evidence.note).toContain("No marketplace or sales data");
+    });
+
+    it("should pass identification details and images to the analyzer", async () => {
+      const { item } = await service.createItem({ files: [makeFile()] });
+      const estimate = vi.spyOn(analyzer, "estimateValue");
+
+      await service.estimateValue(item.id);
+
+      expect(estimate.mock.calls[0][0]).toMatchObject({
+        name: "Test Item",
+        category: "Test",
+        description: "Test description",
+        identificationNotes: null,
+      });
+      expect(estimate.mock.calls[0][0].images).toHaveLength(1);
+    });
+
+    it("should refuse unidentified items without calling the AI", async () => {
+      const { item } = await service.createItem({ files: [makeFile()], skipAI: true });
+      const estimate = vi.spyOn(analyzer, "estimateValue");
+
+      await expect(service.estimateValue(item.id)).rejects.toThrow("Item not identified");
+      expect(estimate).not.toHaveBeenCalled();
+    });
+
+    it("should estimate legacy-identified items and leave legacy values untouched", async () => {
+      const { item } = await service.createItem({ files: [makeFile()] });
+      await storage.updateItem(item.id, {
+        identification: null,
+        analysisMetadata: { model: "openai", version: "v2" },
+        estimatedValue: "300.00",
+        valueConfidence: "high",
+        valueRationale: "Legacy",
+      });
+
+      const updated = await service.estimateValue(item.id);
+
+      expect(updated.valuation?.basedOn.identifiedAt).toBeNull();
+      expect(updated.valuation?.likely).toBe("10.00");
+      expect(updated.estimatedValue).toBe("300.00");
+      expect(updated.valueConfidence).toBe("high");
+      expect(updated.valueRationale).toBe("Legacy");
+    });
+
+    it("should replace a stale valuation with a fresh one", async () => {
+      const { item } = await service.createItem({ files: [makeFile()] });
+      await service.estimateValue(item.id);
+      const reidentified = await service.identifyItem(item.id);
+      expect(reidentified.valuation?.staleAt).not.toBeNull();
+
+      const updated = await service.estimateValue(item.id);
+
+      expect(updated.valuation?.staleAt).toBeNull();
+      expect(updated.valuation?.basedOn.identifiedAt).toBe(
+        reidentified.identification?.identifiedAt
+      );
+    });
+
+    it("should save the estimate as stale if the item was re-identified meanwhile", async () => {
+      const { item } = await service.createItem({ files: [makeFile()] });
+      const original = analyzer.estimateValue.bind(analyzer);
+      vi.spyOn(analyzer, "estimateValue").mockImplementationOnce(async (input) => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        await service.identifyItem(item.id);
+        return original(input);
+      });
+
+      const updated = await service.estimateValue(item.id);
+
+      expect(updated.valuation?.staleReason).toBe("reidentified");
+      expect(updated.valuation?.staleAt).toEqual(expect.any(String));
+    });
+
+    it("should keep the previous valuation when estimation fails", async () => {
+      const { item } = await service.createItem({ files: [makeFile()] });
+      const first = await service.estimateValue(item.id);
+      vi.spyOn(analyzer, "estimateValue").mockRejectedValueOnce(new Error("timeout"));
+
+      await expect(service.estimateValue(item.id)).rejects.toThrow("timeout");
+
+      expect((await storage.getItem(item.id))?.valuation).toEqual(first.valuation);
+    });
+
+    it("should throw if item not found", async () => {
+      await expect(service.estimateValue("nonexistent-id")).rejects.toThrow("Item not found");
+    });
+  });
+
   describe("getItem", () => {
     it("should return item by id", async () => {
       const file = makeFile();

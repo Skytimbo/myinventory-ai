@@ -7,6 +7,8 @@
  * - Re-identification of existing items
  * - Item CRUD operations
  *
+ * - Value estimation on explicit request
+ *
  * Identification never writes monetary values. The legacy estimated_value /
  * value_confidence / value_rationale columns are never written here.
  *
@@ -25,9 +27,15 @@ import {
   MAX_AI_IMAGES,
   type IAnalyzer,
   type IdentificationResult,
+  type ValuationResult,
 } from "./analyzer";
 import { validateUploadedFile } from "./fileValidation";
-import type { Identification, InventoryItem } from "@shared/schema";
+import type { Identification, InventoryItem, Valuation } from "@shared/schema";
+import { getIdentificationStatus } from "@shared/valuation";
+
+/** Shown with every valuation: no external sales data is retrieved */
+export const MODEL_JUDGMENT_NOTE =
+  "AI judgment from the photos and identification. No marketplace or sales data was retrieved.";
 
 // MIME type to file extension mapping
 const mimeToExt: Record<string, string> = {
@@ -63,6 +71,7 @@ export interface CreateItemResult {
 export interface IItemService {
   createItem(options: CreateItemOptions): Promise<CreateItemResult>;
   identifyItem(itemId: string): Promise<InventoryItem>;
+  estimateValue(itemId: string): Promise<InventoryItem>;
   getItem(id: string): Promise<InventoryItem | undefined>;
   getItems(): Promise<InventoryItem[]>;
   deleteItem(id: string): Promise<boolean>;
@@ -214,6 +223,60 @@ export class ItemService implements IItemService {
   }
 
   /**
+   * Estimate an item's secondhand resale value (explicit user action only)
+   *
+   * Replaces the item's valuation with a fresh one and writes nothing else.
+   * If the item was re-identified while the AI call ran, the new valuation
+   * is saved already stale. If the AI call fails nothing is written.
+   *
+   * @throws Error("Item not found"), Error("Item not identified"), or the AI error
+   */
+  async estimateValue(itemId: string): Promise<InventoryItem> {
+    const item = await this.storage.getItem(itemId);
+    if (!item) {
+      throw new Error("Item not found");
+    }
+    if (getIdentificationStatus(item) === "unidentified") {
+      throw new Error("Item not identified");
+    }
+
+    const basedOn = {
+      name: item.name,
+      category: item.category,
+      identifiedAt: item.identification?.identifiedAt ?? null,
+    };
+
+    const result = await this.analyzer.estimateValue({
+      images: await this.readItemImages(item),
+      name: item.name,
+      description: item.description,
+      category: item.category,
+      identificationNotes: item.identification?.notes ?? null,
+    });
+    const evaluatedAt = new Date().toISOString();
+
+    const current = await this.storage.getItem(itemId);
+    if (!current) {
+      throw new Error("Item not found");
+    }
+    const reidentified = (current.identification?.identifiedAt ?? null) !== basedOn.identifiedAt;
+
+    const updated = await this.storage.updateItem(itemId, {
+      valuation: toValuation(result, {
+        basedOn,
+        evaluatedAt,
+        staleAt: reidentified ? evaluatedAt : null,
+      }),
+    });
+
+    if (!updated) {
+      throw new Error("Failed to update item");
+    }
+
+    return updated;
+  }
+
+  /**
    * Get a single item by ID
    */
   async getItem(id: string): Promise<InventoryItem | undefined> {
@@ -325,5 +388,31 @@ function toIdentification(result: IdentificationResult, identifiedAt: string): I
     model: result.model,
     identifiedAt,
     promptVersion: result.promptVersion,
+  };
+}
+
+function toValuation(
+  result: ValuationResult,
+  context: { basedOn: Valuation["basedOn"]; evaluatedAt: string; staleAt: string | null }
+): Valuation {
+  return {
+    status: result.status,
+    marketability: result.marketability,
+    marketabilityReason: result.marketabilityReason,
+    currency: "USD",
+    low: result.low,
+    likely: result.likely,
+    high: result.high,
+    confidence: result.confidence,
+    rationale: result.rationale,
+    missingInformation: result.missingInformation,
+    // Set here, never from model output
+    evidence: { basis: "model_judgment", note: MODEL_JUDGMENT_NOTE },
+    basedOn: context.basedOn,
+    model: result.model,
+    evaluatedAt: context.evaluatedAt,
+    promptVersion: result.promptVersion,
+    staleAt: context.staleAt,
+    staleReason: context.staleAt ? "reidentified" : null,
   };
 }

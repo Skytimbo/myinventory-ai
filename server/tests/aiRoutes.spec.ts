@@ -85,6 +85,63 @@ describe("AI routes", () => {
       expect(await storage.getItem(ITEM_ID)).toEqual(before);
     });
   });
+
+  describe("POST /api/items/:id/estimate-value", () => {
+    it("requires authentication", async () => {
+      const { app } = await createTestApp();
+
+      await request(app).post(`/api/items/${ITEM_ID}/estimate-value`).expect(401);
+    });
+
+    it("returns the item with a model-judgment valuation", async () => {
+      const { app, storage, objectStorage } = await createTestApp();
+      await seedItem(storage, objectStorage, { analysisMetadata: { model: "openai" } });
+      const agent = await login(app);
+
+      const response = await agent.post(`/api/items/${ITEM_ID}/estimate-value`).expect(200);
+
+      expect(response.body.valuation).toMatchObject({
+        status: "estimated",
+        likely: "10.00",
+        evidence: { basis: "model_judgment" },
+      });
+      expect(response.body.location).toBe("Shed");
+    });
+
+    it("returns 409 NOT_IDENTIFIED for unidentified items", async () => {
+      const { app, storage, objectStorage } = await createTestApp();
+      await seedItem(storage, objectStorage);
+      const agent = await login(app);
+
+      const response = await agent.post(`/api/items/${ITEM_ID}/estimate-value`).expect(409);
+
+      expect(response.body.code).toBe("NOT_IDENTIFIED");
+    });
+
+    it("returns 404 for an unknown item", async () => {
+      const { app } = await createTestApp();
+      const agent = await login(app);
+
+      await agent.post(`/api/items/${ITEM_ID}/estimate-value`).expect(404);
+    });
+
+    it("returns VALUATION_FAILED and keeps existing data when the AI fails", async () => {
+      const { app, storage, objectStorage, analyzer } = await createTestApp();
+      await seedItem(storage, objectStorage, {
+        analysisMetadata: { model: "openai" },
+        estimatedValue: "125.00",
+        valueConfidence: "medium",
+      });
+      const before = structuredClone(await storage.getItem(ITEM_ID));
+      vi.spyOn(analyzer, "estimateValue").mockRejectedValueOnce(new Error("upstream timeout"));
+      const agent = await login(app);
+
+      const response = await agent.post(`/api/items/${ITEM_ID}/estimate-value`).expect(502);
+
+      expect(response.body.code).toBe("VALUATION_FAILED");
+      expect(await storage.getItem(ITEM_ID)).toEqual(before);
+    });
+  });
 });
 
 async function createTestApp(): Promise<{

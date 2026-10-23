@@ -281,6 +281,31 @@ export async function registerRoutes(
   app.post("/api/items/:id/analyze", aiRateLimit, identifyHandler);
   app.post("/api/items/:id/reanalyze", aiRateLimit, identifyHandler);
 
+  // POST /api/items/:id/estimate-value - Estimate resale value (explicit request only)
+  app.post(
+    "/api/items/:id/estimate-value",
+    aiRateLimit,
+    wrap(async (req, res) => {
+      try {
+        const item = await itemService.estimateValue(req.params.id);
+        res.json(item);
+      } catch (err: any) {
+        if (err.message === "Item not found") {
+          throw new ApiError(404, "NOT_FOUND", "Item not found");
+        }
+        if (err.message === "Item not identified") {
+          throw new ApiError(409, "NOT_IDENTIFIED", "Identify the item before estimating its value.");
+        }
+        console.error("Estimate value failed:", err);
+        throw new ApiError(
+          502,
+          "VALUATION_FAILED",
+          "Value estimate failed. Existing data was not changed. Please try again."
+        );
+      }
+    })
+  );
+
   // ============================================================
   // Object Storage Endpoint
   // ============================================================

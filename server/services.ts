@@ -17,7 +17,12 @@ import { promises as fs } from "fs";
 import type { Response } from "express";
 import type { IStorage } from "./storage";
 import type { IObjectStorage } from "./objectStorage";
-import type { IAnalyzer, IdentificationResult } from "./analyzer";
+import type {
+  IAnalyzer,
+  IdentificationResult,
+  ValuationInput,
+  ValuationResult,
+} from "./analyzer";
 import type { IItemService } from "./itemService";
 import { openaiCheap, openaiPremium } from "./openai";
 import type { InventoryItem, InsertInventoryItem } from "@shared/schema";
@@ -478,6 +483,23 @@ export class FakeAnalyzer implements IAnalyzer {
       alternatives: [],
       model: "fake",
       promptVersion: "identify-test",
+      raw: null,
+    };
+  }
+
+  async estimateValue(_input: ValuationInput): Promise<ValuationResult> {
+    return {
+      status: "estimated",
+      marketability: "marketable",
+      marketabilityReason: "Test marketability",
+      low: "5.00",
+      likely: "10.00",
+      high: "15.00",
+      confidence: "medium",
+      rationale: "Test valuation",
+      missingInformation: [],
+      model: "fake",
+      promptVersion: "valuation-test",
       raw: null,
     };
   }
