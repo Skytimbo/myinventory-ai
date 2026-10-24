@@ -151,7 +151,7 @@ Suggested set: an ordinary river rock (`nonmarketable`), a branded power tool (`
 
 Do these in order. The code must not reach production before the migration: the app selects the new columns, so every item query would fail against an unmigrated database. The migration is safe for the currently deployed code, which ignores the extra columns.
 
-1. **Back up first.** Use Download Backup in the current app, or `pnpm backup`. Confirm the archive with `pnpm restore:verify` against a test database.
+1. **Back up first: the database and the images separately.** See [Pre-migration backups](#pre-migration-backups) below. Do not continue until both are verified.
 2. **Rehearse on a non-production database.** Apply the migration to a Neon branch or test database, then run the app (or `pnpm restore:verify` with a fresh archive) against it.
 3. **Apply the migration to production.** Run `migrations/0003_identify_valuation.sql` in the Neon SQL Editor. Or run `pnpm exec tsx scripts/run-migration.ts migrations/0003_identify_valuation.sql`, but note that the script uses `DATABASE_URL_TEST` first, then `DATABASE_URL`, and loads `.env`. Check which database it will target before running it.
 4. **Verify the columns:**
@@ -165,7 +165,47 @@ Do these in order. The code must not reach production before the migration: the 
    - Identify one item.
    - Estimate its value.
    - Re-identify it and confirm the estimate shows as stale.
-   - Download a backup and run `pnpm restore:verify` on it.
+   - Download a backup and run `pnpm restore:verify` on it. From this release on, Download Backup and the current `pnpm backup` work; both produce a records-plus-referenced-images archive, not a database dump.
+
+### Pre-migration backups
+
+Photos and records live in different places, so they are backed up separately. A database backup contains no image files, and an image backup contains no database rows.
+
+| Backup | Where the data lives | Covers | Does not cover |
+|---|---|---|---|
+| **Database: Neon branch** | Neon project | Every row and column, instantly; doubles as the database rollback point | Image files |
+| **Database: `pg_dump`** | A file on your machine | Every row and column, independent of Neon | Image files |
+| **Images: Railway volume backup** (if your plan offers it) | Railway volume at `LOCAL_STORAGE_DIR` | Every file on the volume, including files no row references | Database rows |
+| **Records + images archive: `ebbbac2` backup script** | A `.tar.gz` on your machine | Every row's data (`inventory.json`) and every image a row references, with hashes | Unreferenced volume files; it is not a full database dump |
+
+Before migration 0003, use only these. **Do not use the current `pnpm backup`** (it requires migration 0003) and do not expect **Download Backup**, which is not in the version deployed before this release.
+
+**Database.** Take at least one; both is better.
+
+- **Neon branch:** in the Neon console, create a branch named `pre-0003-<date>` from the production branch. This applies only if production uses Neon; confirm Railway's `DATABASE_URL` host first.
+- **`pg_dump`:** use the direct (non-pooler) connection string and a `pg_dump` at least as new as the server. Keep the connection string out of shell history and files.
+  ```bash
+  read -rs "PROD_DB_URL?Production direct connection string: " && echo
+  pg_dump "$PROD_DB_URL" --format=custom --no-owner --no-privileges --file ~/MyInventoryBackups/pre-0003.dump
+  unset PROD_DB_URL
+  ```
+  Verify it by restoring into a disposable local database (`createdb`, then `pg_restore --no-owner --no-privileges -d <db> ~/MyInventoryBackups/pre-0003.dump`) and comparing `SELECT count(*) FROM inventory_items` with production.
+
+**Images.**
+
+- **Railway volume backup:** if available, take one in the Railway dashboard for the service's volume. This is the only backup that also captures files no row references.
+- **`ebbbac2` backup script:** run the previous version of `scripts/backup.ts` from a clean copy, so it cannot pick up `.env` or the new script. Start in the repository root:
+  ```bash
+  mkdir -p ~/MyInventoryBackups/backup-tool-ebbbac2
+  git archive ebbbac2 | tar -x -C ~/MyInventoryBackups/backup-tool-ebbbac2
+  ln -s "$PWD/node_modules" ~/MyInventoryBackups/backup-tool-ebbbac2/node_modules
+  cd ~/MyInventoryBackups/backup-tool-ebbbac2
+  read -rs "DATABASE_URL?Production connection string: " && echo && export DATABASE_URL
+  read -rs "INVENTORY_PASSWORD?App password: " && echo && export INVENTORY_PASSWORD
+  APP_URL=https://<your-app>.up.railway.app BACKUP_DIR=~/MyInventoryBackups pnpm backup
+  unset DATABASE_URL INVENTORY_PASSWORD
+  ```
+  It writes a `0002_analysis_metadata` archive. Verify it with the current `pnpm restore:verify`, which accepts 0002 archives, using a disposable database that has migration 0003 applied as `DATABASE_URL_TEST`.
 
 ### Rollback
 
@@ -199,4 +239,28 @@ WHERE valuation IS NOT NULL
   );
 ```
 
-If it returns rows, take a backup, then mark exactly those rows stale before rolling forward. Set `valuation.staleAt` to the current time and `valuation.staleReason` to `"reidentified_during_rollback"`; leave every other field unchanged so the estimate stays visible as stale. The app does not do this automatically. If the query returns no rows, no action is needed.
+If it returns rows, take a database backup (a Neon branch or `pg_dump`; see [Pre-migration backups](#pre-migration-backups)), then mark exactly those rows stale before rolling forward. Set `valuation.staleAt` to the current time and `valuation.staleReason` to `"reidentified_during_rollback"`; leave every other field unchanged so the estimate stays visible as stale. The app does not do this automatically. If the query returns no rows, no action is needed.
+
+```sql
+BEGIN;
+UPDATE inventory_items
+SET valuation = valuation || jsonb_build_object(
+  'staleAt', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+  'staleReason', 'reidentified_during_rollback')
+WHERE id IN ('<id from the check>', '<id from the check>');
+COMMIT;
+```
+
+Old Analyze also leaves the `identification` record in place, so an item it touched can still show uncertainty notes and alternatives from the earlier identification, even when it has no valuation. This read-only check finds those items:
+
+```sql
+SELECT id, name, identification->>'identifiedAt' AS identified_at,
+       analysis_metadata->>'timestamp' AS last_identification_write
+FROM inventory_items
+WHERE identification IS NOT NULL
+  AND (analysis_metadata->>'timestamp')::timestamptz > (identification->>'identifiedAt')::timestamptz;
+```
+
+**After rolling forward, re-identify every item returned by either check** with the new app's Re-identify. Then review each affected valuation: re-estimate it, or leave it marked stale. Until an item is re-identified, its identification details may describe the earlier identification.
+
+The checks, the mark-stale update, and the old app's behaviour on the migrated schema were rehearsed on a local disposable PostgreSQL database with synthetic data (not on Neon).

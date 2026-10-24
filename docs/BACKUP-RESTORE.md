@@ -19,6 +19,8 @@ Sign in and click **Download Backup** on the home page. The browser downloads `m
 
 Run script backups from your laptop, not inside Railway. The script pulls records from Neon and images from the authenticated deployed app, then writes the archive off-box.
 
+> **Requires migration 0003.** The current script reads the `identification` and `valuation` columns, so against a database that has not been migrated it fails with `column "identification" does not exist`. It cannot make the pre-migration backup before deploying migration 0003. For that backup, use the previous version of this script (commit `ebbbac2`, the `origin/main` before 0003) or `pg_dump`; see "Production deployment runbook" in `docs/AI-IDENTIFY-VALUATION.md`.
+
 Required environment variables:
 
 ```bash
