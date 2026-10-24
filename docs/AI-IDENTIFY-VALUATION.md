@@ -147,6 +147,26 @@ If OpenAI rejects the key (`401`/`403`), the run stops and the remaining items a
 
 Suggested set: an ordinary river rock (`nonmarketable`), a branded power tool (`estimated`), a plain mug (`estimated` or `nonmarketable`), and an antique without visible marks (`insufficient_information`).
 
+## Evaluation log — 2026-10-24
+
+Manual observations made by the owner in the production app after deploying commit `28e3b15`, using four real photos (one photo per item). Prompt versions in effect: `identify-v1` and `valuation-v1`. These are manual production observations of four items, not automated evaluation results, and they are not evidence of general model accuracy.
+
+| Item | Identify | Estimate Value | Notes |
+|---|---|---|---|
+| River rock | Correctly identified as a river rock | `nonmarketable`; no price | No dollar amount fabricated. The legacy $10 estimate from the old combined analysis was preserved and excluded from totals. Minor issue: described as "polished", which the photo does not support. |
+| Handmade ceramic mug | Correctly identified as a handcrafted ceramic mug | `insufficient_information`; asked for a maker's mark, an underside photo, or an appraisal | No fabricated price. Possibly too conservative: a handmade mug has an ordinary secondhand value even when its maker is unknown. |
+| DeWalt XRP 18V cordless drill | Identified generically as "Cordless Drill" | `estimated`: $20–$60, likely $40, medium confidence; labelled AI judgment | Missed the clearly visible DeWalt brand, XRP, and 18V markings. Working condition and battery health were not visible but did not lower confidence. |
+| Fur mukluks | Identified as traditional fur boots | `insufficient_information`; asked for origin, fur type, and markings | Avoided invented provenance and price. Unsupported claim of an interior fur lining. |
+
+Likely causes in the `-v1` prompts:
+
+- Identify discouraged guessed brands but never asked the model to read legible markings, so a clearly printed brand was treated like a guess.
+- Identify did not forbid unsupported claims about surface treatments, materials, or interior construction ("polished", "fur lining").
+- Valuation treated an unknown maker as a reason to give no price at all, rather than considering whether an ordinary secondhand baseline exists.
+- Valuation did not ask for unverified working condition to be recorded or reflected in confidence.
+
+Follow-up: `identify-v2` and `valuation-v2` address these (see the commit that introduces them). Their effect has not yet been observed in production.
+
 ## Production deployment runbook
 
 Do these in order. The code must not reach production before the migration: the app selects the new columns, so every item query would fail against an unmigrated database. The migration is safe for the currently deployed code, which ignores the extra columns.
