@@ -216,7 +216,7 @@ Do these in order. The code must not reach production before the migration: the 
 
 1. **Back up first: the database and the images separately.** See [Pre-migration backups](#pre-migration-backups) below. Do not continue until both are verified.
 2. **Rehearse on a non-production database.** Apply the migration to a Neon branch or test database, then run the app (or `pnpm restore:verify` with a fresh archive) against it.
-3. **Apply the migration to production.** Run `migrations/0003_identify_valuation.sql` in the Neon SQL Editor. Or run `pnpm exec tsx scripts/run-migration.ts migrations/0003_identify_valuation.sql`, but note that the script uses `DATABASE_URL_TEST` first, then `DATABASE_URL`, and loads `.env`. Check which database it will target before running it.
+3. **Apply the migration to production** in the Neon SQL Editor, using a reviewed, guarded script (as done for 0003). `scripts/run-migration.ts` only runs against PostgreSQL on this machine and refuses Neon.
 4. **Verify the columns:**
    ```sql
    SELECT column_name FROM information_schema.columns

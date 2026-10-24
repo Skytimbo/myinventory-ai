@@ -1,11 +1,7 @@
 import { config } from 'dotenv';
 import path from 'path';
 
-// Load .env file from project root
-config({ path: path.resolve(__dirname, '../.env') });
-
-// Fallback for test-specific DATABASE_URL if not in .env
-if (!process.env.DATABASE_URL) {
-  // Use a test database URL or the same as development
-  console.warn('[vitest-setup] DATABASE_URL not found in .env, tests may fail');
-}
+// Tests use in-memory fakes and never need production settings, so the
+// production-pointing .env is never loaded here; only the local development
+// file (if present). Database commands refuse non-local targets regardless.
+config({ path: path.resolve(__dirname, '../.env.development') });

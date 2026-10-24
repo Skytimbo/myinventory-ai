@@ -70,7 +70,7 @@ export DATABASE_URL_TEST='postgresql://...'  # test DB only
 export RESTORE_UPLOADS_DIR='/tmp/myinventory-restore-uploads'
 ```
 
-`DATABASE_URL_TEST` must not point at the same database as `DATABASE_URL`. The verifier refuses to run if they match.
+`DATABASE_URL_TEST` must not point at the same database as `DATABASE_URL`, and it must be PostgreSQL on this machine (localhost or a local socket): the verifier truncates it inside a rolled-back transaction, and refuses any other target before connecting. Create a disposable local database for it, for example `createdb mi_restorecheck` followed by `psql -d mi_restorecheck -f migrations/railway-init.sql`.
 
 `RESTORE_UPLOADS_DIR` must be empty or absent. The verifier copies restored images into this directory using the same relative layout the app expects under `uploads/`.
 

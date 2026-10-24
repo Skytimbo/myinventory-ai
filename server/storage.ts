@@ -1,8 +1,24 @@
 import { type InventoryItem, type InsertInventoryItem, inventoryItems } from "@shared/schema";
 import { neon } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
+import { drizzle as drizzleNodePg } from "drizzle-orm/node-postgres";
 import { eq, desc } from "drizzle-orm";
-import type { NeonHttpDatabase } from "drizzle-orm/neon-http";
+import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
+import { Pool } from "pg";
+import {
+  assertConnectedToLocalServer,
+  assertLocalDatabaseUrl,
+  isLocalDatabaseUrl,
+} from "./databaseTarget";
+
+/**
+ * Driver for a connection URL: PostgreSQL on this machine uses node-postgres
+ * (local development); everything else keeps the Neon HTTP driver used in
+ * production.
+ */
+export function chooseDatabaseDriver(url: string): "node-postgres" | "neon-http" {
+  return isLocalDatabaseUrl(url) ? "node-postgres" : "neon-http";
+}
 
 export interface IStorage {
   getItems(): Promise<InventoryItem[]>;
@@ -13,9 +29,9 @@ export interface IStorage {
 }
 
 export class DatabaseStorage implements IStorage {
-  private db: NeonHttpDatabase;
+  private db: PgDatabase<PgQueryResultHKT>;
 
-  private constructor(db: NeonHttpDatabase) {
+  private constructor(db: PgDatabase<PgQueryResultHKT>) {
     this.db = db;
   }
 
@@ -28,6 +44,19 @@ export class DatabaseStorage implements IStorage {
     const connectionString = process.env.DATABASE_URL;
     if (!connectionString) {
       throw new Error("DATABASE_URL environment variable is required");
+    }
+
+    // Outside production, only a local database is allowed (fail-closed, no override)
+    if (process.env.NODE_ENV !== "production") {
+      assertLocalDatabaseUrl(connectionString, "start the app outside production");
+    }
+
+    if (chooseDatabaseDriver(connectionString) === "node-postgres") {
+      const pool = new Pool({ connectionString });
+      const database = await assertConnectedToLocalServer(pool, "start the app");
+      console.log(`✓ Local database connection verified (${database})`);
+      // Cast: drizzle bundles its own copy of the pg type declarations
+      return new DatabaseStorage(drizzleNodePg(pool as never) as unknown as PgDatabase<PgQueryResultHKT>);
     }
 
     // Initialize Neon HTTP client
@@ -43,7 +72,7 @@ export class DatabaseStorage implements IStorage {
       throw new Error(`Failed to connect to database: ${error instanceof Error ? error.message : String(error)}`);
     }
 
-    return new DatabaseStorage(db);
+    return new DatabaseStorage(db as unknown as PgDatabase<PgQueryResultHKT>);
   }
 
   async getItems(): Promise<InventoryItem[]> {

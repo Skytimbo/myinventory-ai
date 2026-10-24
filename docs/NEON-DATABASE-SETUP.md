@@ -51,12 +51,7 @@ ALTER TABLE inventory_items
   ADD COLUMN IF NOT EXISTS valuation JSONB;
 ```
 
-Or from the repo root (the script targets `DATABASE_URL_TEST` if set, otherwise `DATABASE_URL`; check which before running):
-
-```bash
-pnpm exec tsx scripts/run-migration.ts migrations/0002_analysis_metadata.sql
-pnpm exec tsx scripts/run-migration.ts migrations/0003_identify_valuation.sql
-```
+Run these in the Neon SQL Editor. `scripts/run-migration.ts` and the other database scripts refuse any database that is not PostgreSQL on this machine (see `docs/LOCAL-DEVELOPMENT.md`), so they cannot be used against Neon.
 
 See `docs/AI-IDENTIFY-VALUATION.md` for the deployment order (migrate before deploying the code).
 

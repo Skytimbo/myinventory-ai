@@ -4,15 +4,16 @@
  * 1. Truncates inventory_items table (removes all rows, keeps schema)
  * 2. Clears uploaded images from local storage
  *
- * Works identically on local development and Railway deployment.
- * Uses DATABASE_URL from environment/.env automatically.
+ * Local databases only (fail-closed): the target is verified before any
+ * file or row is touched. Use `pnpm dev:reset` for the local dev database.
  *
- * Usage: pnpm db:reset
+ * Usage: pnpm dev:reset   (or DOTENV_CONFIG_PATH=.env.development pnpm db:reset)
  */
 import 'dotenv/config';
 import { promises as fs } from 'fs';
 import path from 'path';
-import { getPgPoolFromUrl } from './_db';
+import { connectLocalDatabase, exitWithSafeError } from './_localDb';
+import type { PoolClient } from 'pg';
 
 const url = process.env.DATABASE_URL;
 if (!url) {
@@ -68,22 +69,10 @@ async function clearUploads(): Promise<void> {
   }
 }
 
-async function truncateDatabase(): Promise<void> {
-  // Parse URL to show which database we're connecting to (without credentials)
-  const dbUrl = new URL(url);
-  console.log(`Database: ${dbUrl.hostname}${dbUrl.pathname}`);
-
-  const pool = getPgPoolFromUrl(url);
-  const client = await pool.connect();
-
-  try {
-    // Use TRUNCATE with CASCADE to handle any foreign key constraints
-    await client.query('TRUNCATE TABLE inventory_items CASCADE;');
-    console.log('✓ Truncated inventory_items table');
-  } finally {
-    client.release();
-    await pool.end();
-  }
+async function truncateDatabase(client: PoolClient): Promise<void> {
+  // Use TRUNCATE with CASCADE to handle any foreign key constraints
+  await client.query('TRUNCATE TABLE inventory_items CASCADE;');
+  console.log('✓ Truncated inventory_items table');
 }
 
 async function main() {
@@ -93,15 +82,22 @@ async function main() {
   console.log('╚════════════════════════════════════════╝');
   console.log('');
 
-  // Step 1: Clear uploads
-  console.log('Step 1: Clearing uploaded images...');
-  await clearUploads();
-  console.log('');
+  // Verify the target is a local database before touching anything
+  const { pool, client } = await connectLocalDatabase(url, 'reset the database');
+  try {
+    // Step 1: Clear uploads
+    console.log('Step 1: Clearing uploaded images...');
+    await clearUploads();
+    console.log('');
 
-  // Step 2: Truncate database
-  console.log('Step 2: Truncating database...');
-  await truncateDatabase();
-  console.log('');
+    // Step 2: Truncate database
+    console.log('Step 2: Truncating database...');
+    await truncateDatabase(client);
+    console.log('');
+  } finally {
+    client.release();
+    await pool.end();
+  }
 
   console.log('════════════════════════════════════════');
   console.log('RESET COMPLETE');
@@ -109,8 +105,4 @@ async function main() {
   console.log('');
 }
 
-main().catch((e) => {
-  console.error('');
-  console.error('❌ Reset failed:', e.message || e);
-  process.exit(1);
-});
+main().catch(exitWithSafeError);

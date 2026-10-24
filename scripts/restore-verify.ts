@@ -1,7 +1,8 @@
 import "dotenv/config";
 
 import path from "path";
-import { getPgPoolFromUrl } from "./_db";
+import { assertConnectedToLocalServer, assertLocalDatabaseUrl } from "../server/databaseTarget";
+import { Pool } from "pg";
 import {
   ensureEmptyDirectory,
   requireEnv,
@@ -17,6 +18,8 @@ async function main() {
   }
 
   const databaseUrlTest = requireEnv("DATABASE_URL_TEST");
+  // The verification target is truncated (inside a rolled-back transaction): local only
+  assertLocalDatabaseUrl(databaseUrlTest, "use DATABASE_URL_TEST for restore verification");
   const prodDatabaseUrl = process.env.DATABASE_URL;
   if (prodDatabaseUrl && sameDatabaseTarget(prodDatabaseUrl, databaseUrlTest)) {
     throw new Error("Refusing to run restore verification against the production DATABASE_URL");
@@ -43,11 +46,12 @@ async function verifyDatabaseRestore(
   items: BackupInventoryItem[],
   expectedItemCount: number
 ): Promise<void> {
-  const pool = getPgPoolFromUrl(databaseUrlTest);
+  const pool = new Pool({ connectionString: databaseUrlTest });
   const client = await pool.connect();
   let inTransaction = false;
 
   try {
+    await assertConnectedToLocalServer(client, "run restore verification");
     await assertSchemaReady(client);
     await client.query("BEGIN");
     inTransaction = true;
