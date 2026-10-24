@@ -205,7 +205,7 @@ describe("runEvaluation", () => {
     expect(run).toMatchObject({
       mode: "openai",
       models: { identifyCheap: "gpt-4o-mini", identifyPremium: "gpt-4o", valuation: "gpt-4o" },
-      promptVersions: { identify: "identify-v2", valuation: "valuation-v2" },
+      promptVersions: { identify: "identify-v3", valuation: "valuation-v3" },
       summary: { items: 1, failures: 0, mismatches: 0, skipped: 0 },
       abortedReason: null,
     });
@@ -213,13 +213,13 @@ describe("runEvaluation", () => {
     expect(item.itemId).toBe("river-rock");
     expect(item.photos[0]).toMatchObject({ file: "1.jpg", bytes: JPEG.length });
     expect(item.identify).toMatchObject({
-      promptVersion: "identify-v2",
+      promptVersion: "identify-v3",
       model: "gpt-4o-mini",
       parsed: { name: "River rock", uncertainty: "low" },
       error: null,
     });
     expect(item.estimate).toMatchObject({
-      promptVersion: "valuation-v2",
+      promptVersion: "valuation-v3",
       model: "gpt-4o",
       parsed: { status: "nonmarketable", likely: null },
       error: null,

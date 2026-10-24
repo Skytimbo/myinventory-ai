@@ -138,7 +138,7 @@ pnpm ai:eval ai-eval-photos --identify-only --out   # Identify only, no valuatio
 
 `--out` with no directory writes to `ai-eval-results/run-<timestamp>/results.json`. Each run gets a new directory; earlier runs are never overwritten. The file records:
 
-- the run: timestamps, mode, model names, prompt/contract versions (currently `identify-v2`, `valuation-v2`), and a credential-free description of the configuration;
+- the run: timestamps, mode, model names, prompt/contract versions (currently `identify-v3`, `valuation-v3`), and a credential-free description of the configuration;
 - per item (identified by folder name): photo file names, sizes, and SHA-256 hashes;
 - **Identify** and **Estimate Value** as separate actions, each with timestamps, model, prompt version, parsed result, and error;
 - every raw OpenAI request and response, labelled by action. Image data is replaced by MIME type, size, and hash.
@@ -165,7 +165,16 @@ Likely causes in the `-v1` prompts:
 - Valuation treated an unknown maker as a reason to give no price at all, rather than considering whether an ordinary secondhand baseline exists.
 - Valuation did not ask for unverified working condition to be recorded or reflected in confidence.
 
-Follow-up: `identify-v2` and `valuation-v2` address these (see the commit that introduces them). Their effect has not yet been observed in production.
+Follow-up: `identify-v2` and `valuation-v2` (commit `d9123f5`, deployed 2026-10-24) addressed these.
+
+**Retest under `identify-v2` / `valuation-v2` (manual, production, same day):**
+
+- DeWalt drill: identification now "DeWalt XRP 18V cordless drill" with `dewalt`, `xrp`, `18v` tags (fixed). Valuation became `insufficient_information` with marketability `marketable`; rationale said the exact model number was not fully visible and working condition and battery health were unknown; missing information: model number, working condition, battery health.
+- Ceramic mug: description no longer assumes handcrafted construction, but the tags still included "handcrafted". Valuation stayed `insufficient_information` with marketability `marketable`; rationale cited the missing maker's mark; missing information: maker's mark, photo of the underside, professional appraisal.
+
+The stored records show both refusals were the model's own output (validation accepts `insufficient_information` with `marketable`); no validator rejection or application fallback was involved. Likely causes: the refusal option in `valuation-v2` ended with an example list that the mug copied verbatim and the drill partly copied; the tools rule described condition as something that "cannot be established", the same wording as the refusal option; and the bar for a "defensible" baseline was not defined.
+
+`identify-v3` / `valuation-v3` respond: tags carry only visible or legible facts; an item judged marketable gets a conservative, possibly wide, low-confidence baseline unless its basic identity, usability, authenticity, material, or permissibility of sale cannot be judged; tools are priced as untested or as-is; the example list was removed from the refusal option. Not yet observed in production.
 
 ## Production deployment runbook
 

@@ -112,10 +112,10 @@ describe("OpenAIAnalyzer.estimateValue", () => {
     expect(prompt.indexOf("Marketability")).toBeLessThan(prompt.indexOf('"estimated"'));
     expect(prompt).toContain("You have NOT looked up any listings");
     expect(prompt).toContain("Never use 0 to mean unknown");
-    expect(result).toMatchObject({ model: "gpt-4o", promptVersion: "valuation-v2" });
+    expect(result).toMatchObject({ model: "gpt-4o", promptVersion: "valuation-v3" });
   });
 
-  describe("valuation-v2 prompt (2026-10-24 production observations)", () => {
+  describe("valuation prompt rules (2026-10-24 production observations)", () => {
     async function valuationPrompt(overrides: Partial<ValuationInput> = {}): Promise<string> {
       premiumClient.chat.completions.create.mockResolvedValue(makeAIResponse(nonmarketable()));
       await analyzer.estimateValue({ ...input, ...overrides });
@@ -136,7 +136,8 @@ describe("OpenAIAnalyzer.estimateValue", () => {
     it("tells tools and electronics to record unverified function and avoid high confidence (drill)", async () => {
       const prompt = await valuationPrompt();
 
-      expect(prompt).toContain("working condition and battery health generally cannot be established from photographs");
+      expect(prompt).toContain("working condition and battery health are usually unverified from photos");
+      expect(prompt).toContain("Price the item as untested or as-is with low or medium confidence");
       expect(prompt).toContain('do not use "high" confidence while functionality or condition is unverified');
     });
 
@@ -162,6 +163,27 @@ describe("OpenAIAnalyzer.estimateValue", () => {
       expect(prompt).toContain('"estimated": marketability "marketable"');
       expect(prompt).toContain('"nonmarketable": marketability "nonmarketable"');
       expect(prompt).toContain('"insufficient_information": marketability "marketable" or "uncertain"');
+    });
+
+    it("v3: an item judged marketable gets a baseline despite unknown maker, model, or condition", async () => {
+      const prompt = await valuationPrompt();
+
+      expect(prompt).toContain(
+        'If you judged this specific item "marketable", an unknown maker, a partly visible model number, or unverified working condition is not by itself a reason for "insufficient_information"'
+      );
+      expect(prompt).toContain("give a conservative, possibly wide baseline range with low confidence");
+      expect(prompt).toContain(
+        'Reserve "insufficient_information" for items whose basic identity, usability, authenticity, material, or permissibility of sale cannot be judged'
+      );
+    });
+
+    it("v3: the refusal option carries no example list and shares no wording with the tools rule", async () => {
+      const prompt = await valuationPrompt();
+      const refusalLine = prompt.split("\n").find((line) => line.trim().startsWith('- "insufficient_information"')) ?? "";
+
+      expect(refusalLine).toContain("not even a baseline range can be judged");
+      expect(refusalLine).not.toMatch(/maker's mark|model number|underside|professional appraisal|e\.g\./);
+      expect(prompt).not.toContain("cannot be established");
     });
 
     it("passes legible markings from identification into the valuation prompt", async () => {
@@ -308,7 +330,7 @@ describe("parseValuation", () => {
     });
   });
 
-  describe("valuation-v2 outcomes still pass the unchanged contract", () => {
+  describe("valuation-v2/v3 guided outcomes still pass the unchanged contract", () => {
     it("accepts a conservative baseline for a handmade mug, provenance listed as missing", () => {
       expect(
         parseValuation(
@@ -362,6 +384,22 @@ describe("parseValuation", () => {
           })
         )
       ).toMatchObject({ status: "insufficient_information", likely: null, confidence: null });
+    });
+
+    it("accepts a wide, low-confidence as-is baseline for a drill with unverified condition", () => {
+      expect(
+        parseValuation(
+          estimate({
+            marketabilityReason: "Used DeWalt 18V drills sell secondhand.",
+            low: "10",
+            likely: "25",
+            high: "50",
+            confidence: "low",
+            rationale: "As-is baseline for an untested drill; excludes any premium for a confirmed working battery.",
+            missingInformation: ["model number", "working condition", "battery health"],
+          })
+        )
+      ).toMatchObject({ status: "estimated", low: "10.00", high: "50.00", confidence: "low" });
     });
 
     it("keeps the river rock nonmarketable with no price", () => {

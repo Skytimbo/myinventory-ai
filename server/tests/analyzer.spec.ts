@@ -179,7 +179,7 @@ describe("OpenAIAnalyzer.identify", () => {
       confidence: 1,
       notes: null,
       alternatives: [],
-      promptVersion: "identify-v2",
+      promptVersion: "identify-v3",
     });
   });
 
@@ -247,7 +247,7 @@ describe("OpenAIAnalyzer.identify", () => {
   });
 });
 
-describe("identify-v2 prompt (2026-10-24 production observations)", () => {
+describe("identify prompt rules (2026-10-24 production observations)", () => {
   async function identifyPrompt(): Promise<string> {
     const cheap = createMockClient();
     cheap.chat.completions.create.mockResolvedValue(makeAIResponse({ name: "Item", confidence: 0.9 }));
@@ -277,6 +277,13 @@ describe("identify-v2 prompt (2026-10-24 production observations)", () => {
     expect(prompt).toContain("put it in uncertaintyNotes as a possibility instead of stating it");
   });
 
+  it("keeps inferred qualities out of tags (v3: mug tagged 'handcrafted')", async () => {
+    const prompt = await identifyPrompt();
+
+    expect(prompt).toContain("visible facts only; no inferred qualities such as handcrafted or antique");
+    expect(prompt).toContain("This applies to the name, description, and tags alike");
+  });
+
   it("keeps the existing anti-hallucination and no-money rules", async () => {
     const prompt = await identifyPrompt();
 
@@ -304,7 +311,7 @@ describe("identify-v2 prompt (2026-10-24 production observations)", () => {
 
     expect(result.name).toBe("DeWalt XRP 18V cordless drill");
     expect(result.tags).toEqual(["dewalt", "xrp", "18v", "drill"]);
-    expect(result.promptVersion).toBe("identify-v2");
+    expect(result.promptVersion).toBe("identify-v3");
   });
 });
 
