@@ -35,6 +35,8 @@ describe('Storage - Lazy Migration (PRD 0004)', () => {
         analysisMetadata: null,
         identification: null,
         valuation: null,
+        notes: null,
+        userAssertions: null,
         createdAt: '2024-01-15T10:00:00.000Z',
       };
 
@@ -73,6 +75,8 @@ describe('Storage - Lazy Migration (PRD 0004)', () => {
         analysisMetadata: null,
         identification: null,
         valuation: null,
+        notes: null,
+        userAssertions: null,
         createdAt: '2024-06-20T14:30:00.000Z',
       };
 
@@ -116,6 +120,8 @@ describe('Storage - Lazy Migration (PRD 0004)', () => {
           analysisMetadata: null,
           identification: null,
           valuation: null,
+          notes: null,
+          userAssertions: null,
           createdAt: '2024-01-10T10:00:00.000Z',
         },
         {
@@ -134,6 +140,8 @@ describe('Storage - Lazy Migration (PRD 0004)', () => {
           analysisMetadata: null,
           identification: null,
           valuation: null,
+          notes: null,
+          userAssertions: null,
           createdAt: '2024-01-11T10:00:00.000Z',
         },
       ];
@@ -171,6 +179,8 @@ describe('Storage - Lazy Migration (PRD 0004)', () => {
           analysisMetadata: null,
           identification: null,
           valuation: null,
+          notes: null,
+          userAssertions: null,
           createdAt: '2024-01-10T10:00:00.000Z',
         },
         // Multi-image item (has imageUrls)
@@ -193,6 +203,8 @@ describe('Storage - Lazy Migration (PRD 0004)', () => {
           analysisMetadata: null,
           identification: null,
           valuation: null,
+          notes: null,
+          userAssertions: null,
           createdAt: '2024-06-15T10:00:00.000Z',
         },
         // Another legacy item
@@ -212,6 +224,8 @@ describe('Storage - Lazy Migration (PRD 0004)', () => {
           analysisMetadata: null,
           identification: null,
           valuation: null,
+          notes: null,
+          userAssertions: null,
           createdAt: '2024-02-20T10:00:00.000Z',
         },
       ];
@@ -262,6 +276,8 @@ describe('Storage - Lazy Migration (PRD 0004)', () => {
           analysisMetadata: null,
           identification: null,
           valuation: null,
+          notes: null,
+          userAssertions: null,
           createdAt: '2024-01-01T00:00:00.000Z',
         },
         {
@@ -280,6 +296,8 @@ describe('Storage - Lazy Migration (PRD 0004)', () => {
           analysisMetadata: null,
           identification: null,
           valuation: null,
+          notes: null,
+          userAssertions: null,
           createdAt: '2024-12-01T00:00:00.000Z',
         },
         {
@@ -298,6 +316,8 @@ describe('Storage - Lazy Migration (PRD 0004)', () => {
           analysisMetadata: null,
           identification: null,
           valuation: null,
+          notes: null,
+          userAssertions: null,
           createdAt: '2024-06-01T00:00:00.000Z',
         },
       ];

@@ -27,6 +27,7 @@ const SCHEMA_FILES = [
   'migrations/railway-init.sql',
   'migrations/0002_analysis_metadata.sql',
   'migrations/0003_identify_valuation.sql',
+  'migrations/0004_capture_evidence.sql',
 ];
 
 async function main() {
@@ -57,23 +58,44 @@ async function main() {
     console.log(`✓ Schema applied to "${database}"`);
 
     if (reset) {
-      await client.query('TRUNCATE TABLE inventory_items');
+      await client.query('TRUNCATE TABLE item_photos, photos, capture_batches, capture_sessions, inventory_items');
       await fs.rm(path.join(uploadsDir, 'items'), { recursive: true, force: true });
-      console.log(`✓ Reset: removed all rows and ${path.relative(ROOT, uploadsDir)}/items`);
+      await fs.rm(path.join(uploadsDir, 'photos'), { recursive: true, force: true });
+      console.log(`✓ Reset: removed all rows and ${path.relative(ROOT, uploadsDir)}/items, /photos`);
     }
 
     const { rows } = await client.query('SELECT count(*)::int AS count FROM inventory_items');
     if (rows[0].count > 0) {
       console.log(`"${database}" already has ${rows[0].count} item(s); not seeding. Use \`pnpm dev:reset\` to start over.`);
-      return;
+    } else {
+      const seeded = await seed(client, uploadsDir);
+      console.log(`✓ Seeded ${seeded} synthetic item(s) with generated images in ${path.relative(ROOT, uploadsDir)}/`);
     }
-
-    const seeded = await seed(client, uploadsDir);
-    console.log(`✓ Seeded ${seeded} synthetic item(s) with generated images in ${path.relative(ROOT, uploadsDir)}/`);
-    console.log(`\nNext: pnpm dev:local, then open http://localhost:${env.PORT || '5000'}`);
   } finally {
     client.release();
     await pool.end();
+  }
+
+  await registerPhotos(url, env.LOCAL_STORAGE_DIR || './uploads-dev');
+  console.log(`\nNext: pnpm dev:local, then open http://localhost:${env.PORT || '5000'}`);
+}
+
+/** Record existing item photos as evidence, using the app's own PhotoService */
+async function registerPhotos(url: string, storageDir: string): Promise<void> {
+  process.env.DATABASE_URL = url;
+  process.env.LOCAL_STORAGE_DIR = storageDir;
+  const { DatabaseStorage } = await import('../server/storage');
+  const { ObjectStorageService } = await import('../server/objectStorage');
+  const { PhotoService } = await import('../server/photoService');
+  const storage = await DatabaseStorage.create();
+  try {
+    const result = await new PhotoService(storage, new ObjectStorageService()).registerExistingItemPhotos();
+    console.log(
+      `✓ Photo evidence: ${result.registered} registered, ${result.linked} linked, ` +
+        `${result.alreadyRegistered} already registered, ${result.missing.length} missing`
+    );
+  } finally {
+    await storage.close();
   }
 }
 

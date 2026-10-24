@@ -271,6 +271,8 @@ function createInventoryItem(overrides: Partial<InventoryItem>): InventoryItem {
     analysisMetadata: null,
     identification: null,
     valuation: null,
+    notes: null,
+    userAssertions: null,
     createdAt: "2026-06-13T00:00:00.000Z",
     ...overrides,
   };

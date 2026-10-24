@@ -48,6 +48,8 @@ export async function verifyBackupArchive({
       ...item,
       identification: item.identification ?? null,
       valuation: item.valuation ?? null,
+      notes: item.notes ?? null,
+      userAssertions: item.userAssertions ?? null,
     }));
     assertCounts(manifest, items);
 

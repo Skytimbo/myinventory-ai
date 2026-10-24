@@ -43,7 +43,7 @@ export async function registerRoutes(
   app: Express,
   services: AppServices
 ): Promise<Server> {
-  const { itemService, objectStorage } = services;
+  const { itemService, objectStorage, photoService } = services;
   const auth = createAuthMiddleware();
   const loginRateLimit = createRateLimiter({
     windowMs: 15 * 60 * 1000,
@@ -278,6 +278,19 @@ export async function registerRoutes(
     }
   });
   app.post("/api/items/:id/identify", aiRateLimit, identifyHandler);
+
+  // ============================================================
+  // Capture evidence (Milestone 1)
+  // ============================================================
+
+  // POST /api/photos/register-existing - record photos that existing items
+  // reference as evidence, in place (no files moved). Idempotent.
+  app.post(
+    "/api/photos/register-existing",
+    wrap(async (_req, res) => {
+      res.json(await photoService.registerExistingItemPhotos());
+    })
+  );
   app.post("/api/items/:id/analyze", aiRateLimit, identifyHandler);
   app.post("/api/items/:id/reanalyze", aiRateLimit, identifyHandler);
 

@@ -74,24 +74,38 @@ describe("ItemService", () => {
       expect(result.aiWarning).toBe("Quick capture - not yet identified");
     });
 
-    it("should save image to object storage", async () => {
+    it("should store the upload as photo evidence keyed by photo id and link it", async () => {
       const file = makeFile();
-      await service.createItem({ files: [file] });
+      const { item } = await service.createItem({ files: [file] });
 
-      // Should have saved exactly one file
-      const items = await storage.getItems();
-      const imageUrl = items[0].imageUrl;
-      expect(imageUrl).toMatch(/^\/objects\/items\/.+\.jpg$/);
+      const snapshot = await storage.getEvidenceSnapshot();
+      expect(snapshot.photos).toHaveLength(1);
+      const [photo] = snapshot.photos;
+      expect(item.imageUrl).toBe(photo.objectPath);
+      expect(photo.objectPath).toMatch(new RegExp(`^/objects/photos/${photo.id}\\.jpg$`));
+      expect(photo).toMatchObject({
+        source: "item_upload",
+        batchId: null,
+        bytes: file.buffer.length,
+        mimeType: "image/jpeg",
+        originalFilename: "test.jpg",
+      });
+      expect(await objectStorage.read(photo.objectPath)).toEqual(file.buffer);
+      expect(snapshot.itemPhotos).toEqual([
+        expect.objectContaining({ itemId: item.id, photoId: photo.id, position: 0 }),
+      ]);
     });
 
-    it("should save multiple images with indexed paths", async () => {
+    it("should keep multiple uploads in order as separate photos", async () => {
       const files = [makeFile(), makeFile({ originalname: "test2.jpg" })];
       const result = await service.createItem({ files });
 
-      // Multi-image uses /items/{id}/{index}.ext pattern
+      const { photos, itemPhotos } = await storage.getEvidenceSnapshot();
       expect(result.item.imageUrls).toHaveLength(2);
-      expect(result.item.imageUrls![0]).toMatch(/\/0\.jpg$/);
-      expect(result.item.imageUrls![1]).toMatch(/\/1\.jpg$/);
+      expect(result.item.imageUrls).toEqual(
+        itemPhotos.map((link) => photos.find((photo) => photo.id === link.photoId)?.objectPath)
+      );
+      expect(itemPhotos.map((link) => link.position)).toEqual([0, 1]);
     });
 
     it("should set location if provided", async () => {

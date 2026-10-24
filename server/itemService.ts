@@ -30,19 +30,13 @@ import {
   type ValuationResult,
 } from "./analyzer";
 import { validateUploadedFile } from "./fileValidation";
+import { PhotoService } from "./photoService";
 import type { Identification, InventoryItem, Valuation } from "@shared/schema";
 import { getIdentificationStatus } from "@shared/valuation";
 
 /** Shown with every valuation: no external sales data is retrieved */
 export const MODEL_JUDGMENT_NOTE =
   "AI judgment from the photos and identification. No marketplace or sales data was retrieved.";
-
-// MIME type to file extension mapping
-const mimeToExt: Record<string, string> = {
-  "image/jpeg": "jpg",
-  "image/png": "png",
-  "image/webp": "webp",
-};
 
 function hashBuffer(buffer: Buffer): string {
   return createHash("sha256").update(buffer).digest("hex");
@@ -90,7 +84,11 @@ export class ItemService implements IItemService {
     private storage: IStorage,
     private objectStorage: IObjectStorage,
     private analyzer: IAnalyzer
-  ) {}
+  ) {
+    this.photos = new PhotoService(storage, objectStorage);
+  }
+
+  private photos: PhotoService;
 
   /**
    * Create a new inventory item with optional AI identification
@@ -110,9 +108,6 @@ export class ItemService implements IItemService {
         throw new Error(validation.error || "Invalid file type");
       }
     }
-
-    // Generate item ID
-    const itemId = randomUUID();
 
     // Run AI identification (or skip for Quick Capture)
     const identifyStart = Date.now();
@@ -135,8 +130,12 @@ export class ItemService implements IItemService {
       note: aiWarning || null,
     };
 
-    // Save images to storage
-    const imageUrls = await this.saveImages(files, itemId);
+    // Store the uploads as photo evidence (independent of the item), then link them
+    const photos = await this.photos.ingest(
+      files.map((file) => ({ buffer: file.buffer, originalFilename: file.originalname })),
+      { batchId: null, source: "item_upload" }
+    );
+    const imageUrls = photos.map((photo) => photo.objectPath);
 
     // Generate barcode
     const barcodeData = `INV-${Date.now()}-${randomUUID().slice(0, 8).toUpperCase()}`;
@@ -163,6 +162,7 @@ export class ItemService implements IItemService {
       identification: result ? toIdentification(result, identifiedAt) : null,
       valuation: null,
     });
+    await this.storage.linkPhotos(item.id, photos.map((photo) => photo.id), identifiedAt);
 
     return { item, aiWarning };
   }
@@ -337,37 +337,6 @@ export class ItemService implements IItemService {
     return images;
   }
 
-  /**
-   * Save uploaded images to object storage
-   *
-   * @param files - Array of uploaded files
-   * @param itemId - Item ID for path generation
-   * @returns Array of image URLs
-   */
-  private async saveImages(
-    files: Express.Multer.File[],
-    itemId: string
-  ): Promise<string[]> {
-    const imageUrls: string[] = [];
-
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const ext = mimeToExt[file.mimetype] || "jpg";
-
-      const isSingleImage = files.length === 1;
-      const imageUrl = isSingleImage
-        ? `/objects/items/${itemId}.${ext}`
-        : `/objects/items/${itemId}/${i}.${ext}`;
-      const storagePath = isSingleImage
-        ? `items/${itemId}.${ext}`
-        : `items/${itemId}/${i}.${ext}`;
-
-      imageUrls.push(imageUrl);
-      await this.objectStorage.save(storagePath, file.buffer);
-    }
-
-    return imageUrls;
-  }
 }
 
 function identificationToItemFields(result: IdentificationResult) {

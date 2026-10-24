@@ -2,14 +2,15 @@ import { spawn } from "child_process";
 import { createHash } from "crypto";
 import { promises as fs } from "fs";
 import path from "path";
-import type { Identification, Valuation } from "../shared/schema";
+import type { Identification, UserAssertions, Valuation } from "../shared/schema";
 import { VALUATION_CSV_HEADERS, valuationCsvCells } from "../shared/valuation";
 
 export const BACKUP_FORMAT_VERSION = 1;
-export const BACKUP_SCHEMA_VERSION = "0003_identify_valuation";
+export const BACKUP_SCHEMA_VERSION = "0004_capture_evidence";
 /** Archive schema versions restore verification accepts. Older ones lack newer columns. */
 export const SUPPORTED_BACKUP_SCHEMA_VERSIONS: readonly string[] = [
   "0002_analysis_metadata",
+  "0003_identify_valuation",
   BACKUP_SCHEMA_VERSION,
 ];
 export const PROJECT_NAME = "myinventory-ai";
@@ -41,6 +42,10 @@ export interface BackupInventoryItem {
   identification: Identification | null;
   /** Absent in 0002 archives */
   valuation: Valuation | null;
+  /** Absent in 0002/0003 archives */
+  notes: string | null;
+  /** Absent in 0002/0003 archives */
+  userAssertions: UserAssertions | null;
   createdAt: string;
 }
 

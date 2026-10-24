@@ -77,6 +77,8 @@ export function toBackupInventoryItem(item: InventoryItem): BackupInventoryItem 
     analysisMetadata: item.analysisMetadata ?? null,
     identification: item.identification ?? null,
     valuation: item.valuation ?? null,
+    notes: item.notes ?? null,
+    userAssertions: item.userAssertions ?? null,
     createdAt: item.createdAt,
   };
 }

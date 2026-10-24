@@ -63,6 +63,8 @@ function createItem(overrides: Partial<InventoryItem> = {}): InventoryItem {
     analysisMetadata: { model: 'gpt-4o-mini' },
     identification: IDENTIFICATION,
     valuation: null,
+    notes: null,
+    userAssertions: null,
     createdAt: '2026-10-01T00:00:00.000Z',
     ...overrides,
   };
@@ -109,6 +111,8 @@ describe('ItemCard value states', () => {
   it('marks a stale estimate and says it is not counted', () => {
     const item = createItem({
       valuation: createValuation({ staleAt: '2026-10-22T00:00:00.000Z', staleReason: 'reidentified' }),
+      notes: null,
+      userAssertions: null,
     });
     const card = renderCard(item);
 
@@ -206,6 +210,8 @@ describe('ItemCard value states', () => {
         alternatives: ['Butter churn base'],
       },
       valuation: createValuation(),
+      notes: null,
+      userAssertions: null,
     });
     const card = renderCard(item);
 
@@ -334,6 +340,8 @@ describe('ItemCard valuation scope (valuation-v4)', () => {
   it('labels an item estimate and explains untested functionality', () => {
     const item = createItem({
       valuation: createValuation({ scope: 'item', confidence: 'low', assumptions: ['as_is_untested', 'visible_condition_only'] }),
+      notes: null,
+      userAssertions: null,
     });
     const card = renderCard(item);
 
@@ -349,6 +357,8 @@ describe('ItemCard valuation scope (valuation-v4)', () => {
     const item = createItem({
       name: 'Ceramic Mug',
       valuation: createValuation({ scope: 'category', confidence: 'low', assumptions: ['unattributed', 'visible_condition_only'] }),
+      notes: null,
+      userAssertions: null,
     });
     const card = renderCard(item);
 

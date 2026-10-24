@@ -228,6 +228,8 @@ async function seedItem(
       analysisMetadata: { model: "none" },
       identification: null,
       valuation: null,
+      notes: null,
+      userAssertions: null,
       createdAt: "2026-10-01T00:00:00.000Z",
       ...overrides,
     },

@@ -404,6 +404,8 @@ function createItem(
     analysisMetadata: null,
     identification: null,
     valuation: null,
+    notes: null,
+    userAssertions: null,
     createdAt: CREATED_AT,
     ...overrides,
   };

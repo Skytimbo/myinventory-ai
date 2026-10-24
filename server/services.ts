@@ -15,7 +15,7 @@ import path from "path";
 import { randomUUID } from "crypto";
 import { promises as fs } from "fs";
 import type { Response } from "express";
-import type { IStorage } from "./storage";
+import type { EvidenceSnapshot, IStorage } from "./storage";
 import type { IObjectStorage } from "./objectStorage";
 import type {
   IAnalyzer,
@@ -24,8 +24,18 @@ import type {
   ValuationResult,
 } from "./analyzer";
 import type { IItemService } from "./itemService";
+import { PhotoService } from "./photoService";
 import { openaiCheap, openaiPremium } from "./openai";
-import type { InventoryItem, InsertInventoryItem } from "@shared/schema";
+import type {
+  BatchContext,
+  CaptureBatch,
+  CaptureSession,
+  InsertPhoto,
+  InventoryItem,
+  InsertInventoryItem,
+  ItemPhoto,
+  Photo,
+} from "@shared/schema";
 
 /**
  * Application configuration loaded from environment variables
@@ -133,6 +143,9 @@ export interface AppServices {
   /** Item business logic service */
   itemService: IItemService;
 
+  /** Capture evidence: photo ingestion, registration, and listing */
+  photoService: PhotoService;
+
   /** OpenAI client for cheap/fast models (gpt-4o-mini) */
   openaiCheap: import("openai").default;
 
@@ -187,12 +200,14 @@ export async function createProdServices(
   const objectStorage = new ObjectStorageService();
   const analyzer = await createAnalyzer(config, openaiCheap, openaiPremium);
   const itemService = new ItemService(storage, objectStorage, analyzer);
+  const photoService = new PhotoService(storage, objectStorage);
 
   return {
     storage,
     objectStorage,
     analyzer,
     itemService,
+    photoService,
     openaiCheap,
     openaiPremium,
   };
@@ -210,6 +225,77 @@ export async function createProdServices(
  */
 export class FakeDatabaseStorage implements IStorage {
   private items: Map<string, InventoryItem> = new Map();
+  private sessions: Map<string, CaptureSession> = new Map();
+  private batches: Map<string, CaptureBatch> = new Map();
+  private photoRecords: Map<string, Photo> = new Map();
+  private links: ItemPhoto[] = [];
+
+  async createCaptureSession(input: { title: string; notes?: string | null; createdAt: string }): Promise<CaptureSession> {
+    const session = { id: randomUUID(), title: input.title, notes: input.notes ?? null, createdAt: input.createdAt };
+    this.sessions.set(session.id, session);
+    return session;
+  }
+
+  async getCaptureSession(id: string): Promise<CaptureSession | undefined> {
+    return this.sessions.get(id);
+  }
+
+  async createCaptureBatch(input: { sessionId: string; context: BatchContext; createdAt: string }): Promise<CaptureBatch> {
+    if (!this.sessions.has(input.sessionId)) {
+      throw new Error("capture_batches.session_id foreign key violation");
+    }
+    const batch = { id: randomUUID(), ...input };
+    this.batches.set(batch.id, batch);
+    return batch;
+  }
+
+  async createPhoto(photo: InsertPhoto): Promise<Photo> {
+    if (Array.from(this.photoRecords.values()).some((p) => p.objectPath === photo.objectPath)) {
+      throw new Error("photos.object_path unique violation");
+    }
+    const created: Photo = {
+      id: photo.id ?? randomUUID(),
+      batchId: photo.batchId ?? null,
+      objectPath: photo.objectPath,
+      sha256: photo.sha256,
+      bytes: photo.bytes,
+      mimeType: photo.mimeType,
+      originalFilename: photo.originalFilename ?? null,
+      source: photo.source,
+      createdAt: photo.createdAt ?? new Date().toISOString(),
+    };
+    this.photoRecords.set(created.id, created);
+    return created;
+  }
+
+  async getPhotos(ids: string[]): Promise<Photo[]> {
+    return ids.map((id) => this.photoRecords.get(id)).filter((p): p is Photo => Boolean(p));
+  }
+
+  async findPhotoByObjectPath(objectPath: string): Promise<Photo | undefined> {
+    return Array.from(this.photoRecords.values()).find((p) => p.objectPath === objectPath);
+  }
+
+  async linkPhotos(itemId: string, photoIds: string[], createdAt: string): Promise<void> {
+    if (!this.items.has(itemId)) throw new Error("item_photos.item_id foreign key violation");
+    const existing = this.links.filter((link) => link.itemId === itemId);
+    let position = existing.length ? Math.max(...existing.map((link) => link.position)) + 1 : 0;
+    for (const photoId of photoIds) {
+      if (!this.photoRecords.has(photoId)) throw new Error("item_photos.photo_id foreign key violation");
+      if (existing.some((link) => link.photoId === photoId)) continue;
+      this.links.push({ itemId, photoId, position, createdAt });
+      position += 1;
+    }
+  }
+
+  async getEvidenceSnapshot(): Promise<EvidenceSnapshot> {
+    return {
+      sessions: Array.from(this.sessions.values()),
+      batches: Array.from(this.batches.values()),
+      photos: Array.from(this.photoRecords.values()),
+      itemPhotos: [...this.links].sort((a, b) => a.itemId.localeCompare(b.itemId) || a.position - b.position),
+    };
+  }
 
   async getItems(): Promise<InventoryItem[]> {
     const allItems = Array.from(this.items.values());
@@ -255,6 +341,8 @@ export class FakeDatabaseStorage implements IStorage {
       analysisMetadata: null,
       identification: null,
       valuation: null,
+      notes: null,
+      userAssertions: null,
       ...item,
     } as InventoryItem;
 
@@ -263,6 +351,8 @@ export class FakeDatabaseStorage implements IStorage {
   }
 
   async deleteItem(id: string): Promise<boolean> {
+    // Links cascade like the database; photos are kept as evidence
+    this.links = this.links.filter((link) => link.itemId !== id);
     return this.items.delete(id);
   }
 
@@ -290,6 +380,10 @@ export class FakeDatabaseStorage implements IStorage {
    */
   clear(): void {
     this.items.clear();
+    this.sessions.clear();
+    this.batches.clear();
+    this.photoRecords.clear();
+    this.links = [];
   }
 
   /**
@@ -526,12 +620,14 @@ export async function createTestServices(
   const objectStorage = new FakeObjectStorageService();
   const analyzer = new FakeAnalyzer();
   const itemService = new ItemService(storage, objectStorage, analyzer);
+  const photoService = new PhotoService(storage, objectStorage);
 
   return {
     storage,
     objectStorage,
     analyzer,
     itemService,
+    photoService,
     openaiCheap: {} as any,
     openaiPremium: {} as any,
   };
