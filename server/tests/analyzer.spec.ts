@@ -179,7 +179,7 @@ describe("OpenAIAnalyzer.identify", () => {
       confidence: 1,
       notes: null,
       alternatives: [],
-      promptVersion: "identify-v1",
+      promptVersion: "identify-v2",
     });
   });
 
@@ -244,6 +244,67 @@ describe("OpenAIAnalyzer.identify", () => {
   it("exposes capabilities", () => {
     expect(analyzer.capabilities.supportsMultiItem).toBe(false);
     expect(analyzer.capabilities.maxImageSize).toBe(20 * 1024 * 1024);
+  });
+});
+
+describe("identify-v2 prompt (2026-10-24 production observations)", () => {
+  async function identifyPrompt(): Promise<string> {
+    const cheap = createMockClient();
+    cheap.chat.completions.create.mockResolvedValue(makeAIResponse({ name: "Item", confidence: 0.9 }));
+    await new OpenAIAnalyzer(cheap, createMockClient()).identify([Buffer.from("img")]);
+    const content = cheap.chat.completions.create.mock.calls[0][0].messages[0].content as Array<{ type: string; text?: string }>;
+    return content.find((part) => part.type === "text")?.text ?? "";
+  }
+
+  it("asks for legible markings (missed DeWalt / XRP / 18V)", async () => {
+    const prompt = await identifyPrompt();
+
+    expect(prompt).toContain("Read legible markings first");
+    for (const marking of ["manufacturer", "model", "series", "voltage", "capacity"]) {
+      expect(prompt).toContain(marking);
+    }
+    expect(prompt).toContain("Clearly legible text is visible evidence, not a guess");
+    expect(prompt).toContain("DeWalt XRP 18V cordless drill");
+  });
+
+  it("forbids unsupported treatment, material, origin, and interior claims ('polished', fur lining)", async () => {
+    const prompt = await identifyPrompt();
+
+    expect(prompt).toContain("Separate what is visible from what is inferred");
+    for (const claim of ["surface treatment", "polished", "specific materials", "provenance", "cultural origin", "interior construction", "a lining", "age"]) {
+      expect(prompt).toContain(claim);
+    }
+    expect(prompt).toContain("put it in uncertaintyNotes as a possibility instead of stating it");
+  });
+
+  it("keeps the existing anti-hallucination and no-money rules", async () => {
+    const prompt = await identifyPrompt();
+
+    expect(prompt).toContain("Do not estimate price, value, or worth");
+    expect(prompt).toContain("Do not invent brands, models, makers, dates, or origins");
+    expect(prompt).toContain('Name ordinary natural objects plainly (e.g. "River rock"');
+    expect(prompt).not.toMatch(/eBay|estimatedValue/);
+  });
+
+  it("keeps legible markings from a model answer in name and tags", async () => {
+    const cheap = createMockClient();
+    cheap.chat.completions.create.mockResolvedValue(
+      makeAIResponse({
+        name: "DeWalt XRP 18V cordless drill",
+        description: "Yellow and black DeWalt drill marked XRP and 18V, with battery attached.",
+        category: "Tools",
+        tags: ["DeWalt", "XRP", "18V", "drill"],
+        confidence: 0.93,
+        uncertaintyNotes: "Working condition cannot be seen.",
+        possibleAlternatives: [],
+      })
+    );
+
+    const result = await new OpenAIAnalyzer(cheap, createMockClient()).identify([Buffer.from("img")]);
+
+    expect(result.name).toBe("DeWalt XRP 18V cordless drill");
+    expect(result.tags).toEqual(["dewalt", "xrp", "18v", "drill"]);
+    expect(result.promptVersion).toBe("identify-v2");
   });
 });
 

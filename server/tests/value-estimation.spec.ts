@@ -112,7 +112,63 @@ describe("OpenAIAnalyzer.estimateValue", () => {
     expect(prompt.indexOf("Marketability")).toBeLessThan(prompt.indexOf('"estimated"'));
     expect(prompt).toContain("You have NOT looked up any listings");
     expect(prompt).toContain("Never use 0 to mean unknown");
-    expect(result).toMatchObject({ model: "gpt-4o", promptVersion: "valuation-v1" });
+    expect(result).toMatchObject({ model: "gpt-4o", promptVersion: "valuation-v2" });
+  });
+
+  describe("valuation-v2 prompt (2026-10-24 production observations)", () => {
+    async function valuationPrompt(overrides: Partial<ValuationInput> = {}): Promise<string> {
+      premiumClient.chat.completions.create.mockResolvedValue(makeAIResponse(nonmarketable()));
+      await analyzer.estimateValue({ ...input, ...overrides });
+      const content = premiumClient.chat.completions.create.mock.calls[0][0].messages[0].content as Array<{ type: string; text?: string }>;
+      return content.find((part) => part.type === "text")?.text ?? "";
+    }
+
+    it("asks for a conservative baseline that excludes provenance premiums (mug)", async () => {
+      const prompt = await valuationPrompt();
+
+      expect(prompt).toContain("ordinary secondhand market independent of its maker or provenance");
+      expect(prompt).toContain("defensible baseline resale range");
+      expect(prompt).toContain("explicitly excluding unverified collectible or provenance premiums");
+      expect(prompt).toContain("If the evidence is insufficient even for that baseline");
+      expect(prompt).toContain("Being in a marketable category alone does not require a price");
+    });
+
+    it("tells tools and electronics to record unverified function and avoid high confidence (drill)", async () => {
+      const prompt = await valuationPrompt();
+
+      expect(prompt).toContain("working condition and battery health generally cannot be established from photographs");
+      expect(prompt).toContain('do not use "high" confidence while functionality or condition is unverified');
+    });
+
+    it("handles animal materials as uncertainty, never as a legal conclusion (mukluks)", async () => {
+      const prompt = await valuationPrompt();
+
+      expect(prompt).toContain("do not state that resale restrictions apply");
+      expect(prompt).toContain("do not identify the species or material beyond what is visible");
+    });
+
+    it("keeps nonmarketable natural objects, no invented evidence, and no zero prices (river rock)", async () => {
+      const prompt = await valuationPrompt();
+
+      expect(prompt).toContain('Ordinary natural objects (rocks, sticks, shells)');
+      expect(prompt).toContain("Do not invent a price for a nonmarketable item");
+      expect(prompt).toContain("do not invent comparable sales, marketplace research, or pricing evidence");
+      expect(prompt).toContain("Never use 0 to mean unknown");
+    });
+
+    it("pairs each outcome with the marketability the validator allows", async () => {
+      const prompt = await valuationPrompt();
+
+      expect(prompt).toContain('"estimated": marketability "marketable"');
+      expect(prompt).toContain('"nonmarketable": marketability "nonmarketable"');
+      expect(prompt).toContain('"insufficient_information": marketability "marketable" or "uncertain"');
+    });
+
+    it("passes legible markings from identification into the valuation prompt", async () => {
+      const prompt = await valuationPrompt({ name: "DeWalt XRP 18V cordless drill", category: "Tools" });
+
+      expect(prompt).toContain("- Name: DeWalt XRP 18V cordless drill");
+    });
   });
 
   it("rejects a zero-valued estimate from the model", async () => {
@@ -249,6 +305,67 @@ describe("parseValuation", () => {
 
     it("ignores a confidence level on non-estimated outcomes", () => {
       expect(parseValuation(nonmarketable({ confidence: "high" })).confidence).toBeNull();
+    });
+  });
+
+  describe("valuation-v2 outcomes still pass the unchanged contract", () => {
+    it("accepts a conservative baseline for a handmade mug, provenance listed as missing", () => {
+      expect(
+        parseValuation(
+          estimate({
+            marketabilityReason: "Handmade mugs sell secondhand as ordinary drinkware regardless of maker.",
+            low: "4",
+            likely: "8",
+            high: "15",
+            confidence: "low",
+            rationale: "Baseline for a used handmade mug; excludes any collectible or maker premium.",
+            missingInformation: ["maker's mark", "underside photo"],
+          })
+        )
+      ).toMatchObject({ status: "estimated", likely: "8.00", missingInformation: ["maker's mark", "underside photo"] });
+    });
+
+    it("still accepts insufficient information when not even a baseline is defensible", () => {
+      expect(parseValuation(insufficient({ marketability: "marketable" })).status).toBe(
+        "insufficient_information"
+      );
+    });
+
+    it("rejects a baseline price paired with uncertain marketability (validation unchanged)", () => {
+      expect(() => parseValuation(estimate({ marketability: "uncertain" }))).toThrow(
+        InvalidValuationError
+      );
+    });
+
+    it("accepts a tool estimate that records unverified condition", () => {
+      expect(
+        parseValuation(
+          estimate({
+            confidence: "medium",
+            missingInformation: ["working condition", "battery health"],
+          })
+        ).missingInformation
+      ).toEqual(["working condition", "battery health"]);
+    });
+
+    it("does not enforce the tool confidence guidance in validation (prompt-only)", () => {
+      expect(
+        parseValuation(estimate({ confidence: "high", missingInformation: ["working condition"] })).confidence
+      ).toBe("high");
+    });
+
+    it("accepts fur boots as insufficient information without a price or legal conclusion", () => {
+      expect(
+        parseValuation(
+          insufficient({
+            missingInformation: ["fur type", "maker or origin", "whether resale of the material is permitted"],
+          })
+        )
+      ).toMatchObject({ status: "insufficient_information", likely: null, confidence: null });
+    });
+
+    it("keeps the river rock nonmarketable with no price", () => {
+      expect(parseValuation(nonmarketable())).toMatchObject({ status: "nonmarketable", likely: null });
     });
   });
 

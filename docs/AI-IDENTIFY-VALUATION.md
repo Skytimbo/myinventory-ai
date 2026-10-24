@@ -138,7 +138,7 @@ pnpm ai:eval ai-eval-photos --identify-only --out   # Identify only, no valuatio
 
 `--out` with no directory writes to `ai-eval-results/run-<timestamp>/results.json`. Each run gets a new directory; earlier runs are never overwritten. The file records:
 
-- the run: timestamps, mode, model names, prompt/contract versions (`identify-v1`, `valuation-v1`), and a credential-free description of the configuration;
+- the run: timestamps, mode, model names, prompt/contract versions (currently `identify-v2`, `valuation-v2`), and a credential-free description of the configuration;
 - per item (identified by folder name): photo file names, sizes, and SHA-256 hashes;
 - **Identify** and **Estimate Value** as separate actions, each with timestamps, model, prompt version, parsed result, and error;
 - every raw OpenAI request and response, labelled by action. Image data is replaced by MIME type, size, and hash.

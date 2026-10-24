@@ -12,10 +12,10 @@
 
 import type OpenAI from "openai";
 
-export const IDENTIFY_PROMPT_VERSION = "identify-v1";
+export const IDENTIFY_PROMPT_VERSION = "identify-v2";
 export const IDENTIFY_MODEL_CHEAP = "gpt-4o-mini";
 export const IDENTIFY_MODEL_PREMIUM = "gpt-4o";
-export const VALUATION_PROMPT_VERSION = "valuation-v1";
+export const VALUATION_PROMPT_VERSION = "valuation-v2";
 export const VALUATION_MODEL = "gpt-4o";
 
 /** Upper bound for a plausible household-inventory estimate (USD) */
@@ -455,18 +455,20 @@ function getIdentifyPrompt(): string {
 
 Return JSON with exactly these fields:
 {
-  "name": "Short, specific name. Include brand or model only if visible or clearly recognizable.",
-  "description": "1-2 sentences describing what is visible: material, color, notable features, visible condition.",
+  "name": "Short, specific name. Include the manufacturer, model, or series when it is legible on the item (e.g. 'DeWalt XRP 18V cordless drill'); otherwise a plain generic name.",
+  "description": "1-2 sentences describing only what the photos show: shape, color, legible markings, visible condition.",
   "category": "One of: ${CATEGORIES.join(", ")}",
-  "tags": ["3-8", "lowercase", "searchable", "tags"],
+  "tags": ["3-8", "lowercase", "searchable", "tags", "including legible brand, model, or series"],
   "confidence": 0.0-1.0 (how sure you are about what the item is),
-  "uncertaintyNotes": "null, or one sentence on what is uncertain and what photo would help (e.g. 'Maker's mark not visible; a photo of the underside would help.')",
+  "uncertaintyNotes": "null, or one or two sentences on what is uncertain or only inferred, and what photo would help (e.g. 'Maker's mark not visible; a photo of the underside would help.')",
   "possibleAlternatives": ["up to 3 other plausible identifications; empty if confident"]
 }
 
 Rules:
 - Identify only. Do not estimate price, value, or worth, and do not mention money.
-- Do not invent brands, models, makers, dates, or origins that are not visible or clearly recognizable. Prefer an accurate generic name ("Hand-thrown ceramic bowl") over a guessed specific one.
+- Read legible markings first: printed, molded, or engraved text such as manufacturer, model, series, voltage, capacity, or size. Clearly legible text is visible evidence, not a guess. Use it in the name, mention it in the description, and add it to the tags.
+- Separate what is visible from what is inferred. State as fact only what the photos directly show. Do not assert manufacturing process (e.g. hand-carved, hand-thrown), surface treatment (e.g. polished, restored), age, specific materials (e.g. the species of a fur or wood), provenance, cultural origin, or interior construction (e.g. a lining) unless it is directly visible. If one of these is a plausible inference, put it in uncertaintyNotes as a possibility instead of stating it.
+- Do not invent brands, models, makers, dates, or origins that are not legible or clearly recognizable. When nothing identifying is legible, prefer an accurate generic name ("Hand-thrown ceramic bowl") over a guessed specific one.
 - Name ordinary natural objects plainly (e.g. "River rock", "Pinecone").
 - If the photo is unclear, say so in uncertaintyNotes and lower confidence.`;
 }
@@ -479,11 +481,12 @@ function getValuationPrompt(input: ValuationInput): string {
 - Identification notes: ${input.identificationNotes || "(none)"}
 
 Work in this order:
-1. Marketability. Is there a realistic secondhand market where someone would pay money for this specific item? Ordinary natural objects (rocks, sticks, shells), worn-out or disposable goods, and items nobody buys used are "nonmarketable". If the item cannot be pinned down precisely enough to judge (for example an antique whose maker, age, or authenticity is not visible), use "uncertain".
-2. Then choose exactly one outcome:
-   - "estimated": marketable, and you can give a defensible range for a typical private-party used sale in the visible condition.
-   - "nonmarketable": no realistic resale market. Give no price.
-   - "insufficient_information": a value may exist but cannot be established from these photos. Give no price, and list what would be needed (e.g. "maker's mark", "model number", "photo of the underside", "professional appraisal").
+1. Marketability. Is there a realistic secondhand market where someone would pay money for this specific item? Ordinary natural objects (rocks, sticks, shells), worn-out or disposable goods, and items nobody buys used are "nonmarketable". If the item cannot be pinned down precisely enough to judge whether it would sell at all (for example an antique whose maker, age, or authenticity is not visible), use "uncertain".
+2. Baseline before provenance. When an object has an ordinary secondhand market independent of its maker or provenance, assess whether the available evidence supports a defensible baseline resale range. If it does, provide a conservative range, explicitly excluding unverified collectible or provenance premiums, and list the maker, provenance, or other unverified factors in missingInformation. If the evidence is insufficient even for that baseline, return "insufficient_information" and identify the missing evidence. Being in a marketable category alone does not require a price.
+3. Then choose exactly one outcome:
+   - "estimated": marketability "marketable", and you can give a defensible range for a typical private-party used sale in the visible condition (a conservative baseline is acceptable).
+   - "nonmarketable": marketability "nonmarketable"; no realistic resale market. Give no price.
+   - "insufficient_information": marketability "marketable" or "uncertain"; a value may exist but cannot be established from these photos, not even as a baseline. Give no price, and list what would be needed (e.g. "maker's mark", "model number", "photo of the underside", "professional appraisal").
 
 Return JSON with exactly these fields:
 {
@@ -494,14 +497,16 @@ Return JSON with exactly these fields:
   "likely": "USD decimal string, or null",
   "high": "USD decimal string, or null",
   "confidence": "low" | "medium" | "high" | null,
-  "rationale": "1-2 sentences explaining your judgment.",
+  "rationale": "1-2 sentences explaining your judgment. For a baseline range, say that it excludes any collectible or provenance premium.",
   "missingInformation": ["what would make the estimate possible or more reliable"]
 }
 
 Rules:
-- You have NOT looked up any listings, sales, auctions, or price guides. Do not claim or imply that you checked eBay, sold listings, comparable sales, or any other data source. Describe your reasoning as your own judgment.
+- You have NOT looked up any listings, sales, auctions, or price guides. Do not claim or imply that you checked eBay, sold listings, comparable sales, or any other data source, and do not invent comparable sales, marketplace research, or pricing evidence. Describe your reasoning as your own judgment.
 - Never use 0 to mean unknown. If you cannot give a price, use null and the matching status.
 - Do not invent a price for a nonmarketable item.
+- Tools and electronics: working condition and battery health generally cannot be established from photographs. Record them in missingInformation when they matter, and do not use "high" confidence while functionality or condition is unverified.
+- Items of fur, hide, feathers, ivory, or other animal materials: do not identify the species or material beyond what is visible, and do not state that resale restrictions apply. If the material, origin, or permissibility of resale is uncertain and matters to value, list it in missingInformation as something to verify.
 - Be conservative: private-party used prices, not retail. Prefer an honest wide range over false precision.`;
 }
 
