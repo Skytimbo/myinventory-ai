@@ -31,7 +31,13 @@ import {
 } from "./analyzer";
 import { validateUploadedFile } from "./fileValidation";
 import { PhotoService } from "./photoService";
-import type { Identification, InventoryItem, Valuation } from "@shared/schema";
+import type {
+  AssertableField,
+  Identification,
+  InventoryItem,
+  UserAssertions,
+  Valuation,
+} from "@shared/schema";
 import { getIdentificationStatus } from "@shared/valuation";
 
 /** Shown with every valuation: no external sales data is retrieved */
@@ -65,6 +71,7 @@ export interface CreateItemResult {
 export interface IItemService {
   createItem(options: CreateItemOptions): Promise<CreateItemResult>;
   identifyItem(itemId: string): Promise<InventoryItem>;
+  createItemFromPhotos(input: { photoIds: string[]; name?: string; identify?: boolean }): Promise<CreateItemResult>;
   estimateValue(itemId: string): Promise<InventoryItem>;
   getItem(id: string): Promise<InventoryItem | undefined>;
   getItems(): Promise<InventoryItem[]>;
@@ -201,9 +208,18 @@ export class ItemService implements IItemService {
         ? { ...current.valuation, staleAt: identifiedAt, staleReason: "reidentified" }
         : current.valuation;
 
+    // Never overwrite a field the user asserted; keep the AI's differing value as a suggestion
+    const { applied, suggestions } = applyRespectingAssertions(
+      identificationToItemFields(result),
+      current
+    );
+
     const updated = await this.storage.updateItem(itemId, {
-      ...identificationToItemFields(result),
-      identification: toIdentification(result, identifiedAt),
+      ...applied,
+      identification: {
+        ...toIdentification(result, identifiedAt),
+        ...(Object.keys(suggestions).length ? { suggestions } : {}),
+      },
       valuation,
       analysisMetadata: {
         model: result.model,
@@ -220,6 +236,73 @@ export class ItemService implements IItemService {
     }
 
     return updated;
+  }
+
+  /**
+   * Create an inventory entry from photos already captured as evidence.
+   * Photos are linked, not copied; a photo may support several entries.
+   * Context of the first photo's batch pre-fills fields as user assertions
+   * (source "batch_context"). AI runs only if requested; if it fails the
+   * entry is still created, unidentified.
+   */
+  async createItemFromPhotos(input: {
+    photoIds: string[];
+    name?: string;
+    identify?: boolean;
+  }): Promise<CreateItemResult> {
+    const photoIds = Array.from(new Set(input.photoIds));
+    const photos = await this.storage.getPhotos(photoIds);
+    if (photoIds.length === 0 || photos.length !== photoIds.length) {
+      throw new Error("Photo not found");
+    }
+
+    const now = new Date().toISOString();
+    const snapshot = await this.storage.getEvidenceSnapshot();
+    const context = snapshot.batches.find((batch) => batch.id === photos[0].batchId)?.context ?? {};
+    const assertions: UserAssertions = {};
+    const fromContext = { source: "batch_context" as const, assertedAt: now };
+
+    const name = input.name?.trim().slice(0, 120);
+    if (name) assertions.name = { source: "user", assertedAt: now };
+    const category = context.category?.trim();
+    if (category) assertions.category = fromContext;
+    const location = [context.location, context.container].map((part) => part?.trim()).filter(Boolean).join(" › ");
+    if (location) assertions.location = fromContext;
+    const notes = context.purpose?.trim() ? `Purpose: ${context.purpose.trim()}` : null;
+    if (notes) assertions.notes = fromContext;
+
+    const item = await this.storage.createItem({
+      name: name || "Untitled Item",
+      description: "",
+      category: category || "Uncategorized",
+      tags: [],
+      imageUrl: photos[0].objectPath,
+      imageUrls: photos.map((photo) => photo.objectPath),
+      barcodeData: `INV-${Date.now()}-${randomUUID().slice(0, 8).toUpperCase()}`,
+      location: location || null,
+      notes,
+      userAssertions: Object.keys(assertions).length ? assertions : null,
+      analysisMetadata: {
+        model: "none",
+        timestamp: now,
+        version: "v3",
+        imageHash: photos[0].sha256,
+        note: "Created from captured photos - not yet identified",
+      },
+      identification: null,
+      valuation: null,
+    });
+    await this.storage.linkPhotos(item.id, photos.map((photo) => photo.id), now);
+
+    if (!input.identify) {
+      return { item, aiWarning: null };
+    }
+    try {
+      return { item: await this.identifyItem(item.id), aiWarning: null };
+    } catch (err) {
+      console.error("AI identification failed:", err);
+      return { item, aiWarning: "AI identification unavailable. Use Identify to try again." };
+    }
   }
 
   /**
@@ -386,4 +469,29 @@ function toValuation(
     staleAt: context.staleAt,
     staleReason: context.staleAt ? "reidentified" : null,
   };
+}
+
+const IDENTIFIED_FIELDS = ["name", "description", "category", "tags"] as const satisfies readonly AssertableField[];
+
+/**
+ * Split AI identification into fields to apply and suggestions for fields
+ * the user asserted. A suggestion is kept only when it differs.
+ */
+function applyRespectingAssertions(
+  fields: ReturnType<typeof identificationToItemFields>,
+  current: InventoryItem
+): { applied: Partial<ReturnType<typeof identificationToItemFields>>; suggestions: NonNullable<Identification["suggestions"]> } {
+  const asserted = current.userAssertions ?? {};
+  const applied: Partial<ReturnType<typeof identificationToItemFields>> = {};
+  const suggestions: Record<string, unknown> = {};
+  for (const field of IDENTIFIED_FIELDS) {
+    if (asserted[field]) {
+      if (JSON.stringify(fields[field]) !== JSON.stringify(current[field])) {
+        suggestions[field] = fields[field];
+      }
+    } else {
+      (applied as Record<string, unknown>)[field] = fields[field];
+    }
+  }
+  return { applied, suggestions: suggestions as NonNullable<Identification["suggestions"]> };
 }

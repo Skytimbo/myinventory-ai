@@ -30,6 +30,16 @@ export const identificationSchema = z
     model: z.string(),
     identifiedAt: z.string(),
     promptVersion: z.string(),
+    // AI values that were NOT applied because the user had asserted the field
+    suggestions: z
+      .object({
+        name: z.string(),
+        description: z.string(),
+        category: z.string(),
+        tags: z.array(z.string()),
+      })
+      .partial()
+      .optional(),
   })
   .nullable();
 

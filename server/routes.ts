@@ -15,6 +15,8 @@ import { createServer, type Server } from "http";
 import { timingSafeEqual } from "crypto";
 import type { AppServices } from "./services";
 import multer from "multer";
+import { z } from "zod";
+import { InvalidPhotoError, SessionNotFoundError } from "./photoService";
 import { wrap, ApiError } from "./errors";
 import { validateUploadedFile } from "./fileValidation";
 import { openAIHealthCheck } from "./analyzer";
@@ -37,6 +39,24 @@ declare module "express-session" {
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10485760 }, // 10MB limit
+});
+
+/** Batch capture: up to 25 photos per request (clients send larger selections in chunks) */
+export const MAX_BATCH_PHOTOS = 25;
+const batchUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10485760, files: MAX_BATCH_PHOTOS },
+});
+
+const createSessionBody = z.object({
+  title: z.string().max(120).optional(),
+  notes: z.string().max(2000).nullable().optional(),
+});
+
+const createFromPhotosBody = z.object({
+  photoIds: z.array(z.string().uuid()).min(1).max(10),
+  name: z.string().max(120).optional(),
+  identify: z.boolean().optional(),
 });
 
 export async function registerRoutes(
@@ -291,6 +311,81 @@ export async function registerRoutes(
       res.json(await photoService.registerExistingItemPhotos());
     })
   );
+
+  // GET /api/capture-sessions - sessions with batch and photo counts
+  app.get(
+    "/api/capture-sessions",
+    wrap(async (_req, res) => {
+      res.json(await photoService.listSessions());
+    })
+  );
+
+  // POST /api/capture-sessions - start a capture session
+  app.post(
+    "/api/capture-sessions",
+    wrap(async (req, res) => {
+      const body = createSessionBody.safeParse(req.body ?? {});
+      if (!body.success) {
+        throw new ApiError(400, "INVALID_SESSION", "Invalid capture session");
+      }
+      res.status(201).json(await photoService.createSession(body.data));
+    })
+  );
+
+  // POST /api/capture-sessions/:id/batches - upload photos (field "photos") with
+  // optional context fields location, category, container, purpose. No AI runs.
+  app.post(
+    "/api/capture-sessions/:id/batches",
+    batchUpload.array("photos", MAX_BATCH_PHOTOS),
+    wrap(async (req, res) => {
+      const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+      if (files.length === 0) {
+        throw new ApiError(400, "NO_PHOTOS", 'No photos provided. Use the "photos" field.');
+      }
+      const field = (name: string) => (typeof req.body?.[name] === "string" ? req.body[name] : undefined);
+      try {
+        const result = await photoService.addBatch(
+          req.params.id,
+          files.map((file) => ({ buffer: file.buffer, originalFilename: file.originalname })),
+          { location: field("location"), category: field("category"), container: field("container"), purpose: field("purpose") }
+        );
+        res.status(201).json(result);
+      } catch (err) {
+        if (err instanceof SessionNotFoundError) throw new ApiError(404, "NOT_FOUND", err.message);
+        if (err instanceof InvalidPhotoError) throw new ApiError(400, "INVALID_FILE_TYPE", err.message);
+        throw err;
+      }
+    })
+  );
+
+  // GET /api/photos?unassigned=true - photo evidence with context and links
+  app.get(
+    "/api/photos",
+    wrap(async (req, res) => {
+      res.json(await photoService.listPhotos({ unassigned: req.query.unassigned === "true" }));
+    })
+  );
+
+  // POST /api/items/from-photos - create an inventory entry from captured photos
+  app.post(
+    "/api/items/from-photos",
+    aiRateLimit,
+    wrap(async (req, res) => {
+      const body = createFromPhotosBody.safeParse(req.body ?? {});
+      if (!body.success) {
+        throw new ApiError(400, "INVALID_REQUEST", "Select 1 to 10 photos");
+      }
+      try {
+        const result = await itemService.createItemFromPhotos(body.data);
+        res.status(201).json({ ...result.item, _aiWarning: result.aiWarning });
+      } catch (err) {
+        if (err instanceof Error && err.message === "Photo not found") {
+          throw new ApiError(404, "NOT_FOUND", "Photo not found");
+        }
+        throw err;
+      }
+    })
+  );
   app.post("/api/items/:id/analyze", aiRateLimit, identifyHandler);
   app.post("/api/items/:id/reanalyze", aiRateLimit, identifyHandler);
 
@@ -341,6 +436,12 @@ export async function registerRoutes(
         return res.status(413).json({
           error: "File too large. Maximum size is 10MB.",
           code: "FILE_TOO_LARGE",
+        });
+      }
+      if (error.code === "LIMIT_FILE_COUNT" || error.code === "LIMIT_UNEXPECTED_FILE") {
+        return res.status(400).json({
+          error: `Too many photos in one upload. Send at most ${MAX_BATCH_PHOTOS} at a time.`,
+          code: "TOO_MANY_PHOTOS",
         });
       }
     }

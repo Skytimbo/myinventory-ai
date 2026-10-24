@@ -11,7 +11,7 @@
  */
 
 import { createHash, randomUUID } from "crypto";
-import type { BatchContext, Photo, PhotoSource } from "@shared/schema";
+import type { BatchContext, CaptureBatch, CaptureSession, Photo, PhotoSource } from "@shared/schema";
 import { getMimeTypeFromBuffer } from "./fileValidation";
 import type { IObjectStorage } from "./objectStorage";
 import type { IStorage } from "./storage";
@@ -41,6 +41,19 @@ export interface RegistrationResult {
   alreadyRegistered: number;
   /** Object paths referenced by items whose files could not be read */
   missing: string[];
+}
+
+export interface SessionSummary extends CaptureSession {
+  batchCount: number;
+  photoCount: number;
+  unassignedCount: number;
+}
+
+export class SessionNotFoundError extends Error {
+  constructor() {
+    super("Capture session not found");
+    this.name = "SessionNotFoundError";
+  }
 }
 
 export class InvalidPhotoError extends Error {
@@ -146,6 +159,56 @@ export class PhotoService {
       }
     }
     return result;
+  }
+
+  async createSession(input: { title?: string; notes?: string | null }): Promise<CaptureSession> {
+    const now = new Date();
+    const title = input.title?.trim().slice(0, 120) || `Capture ${now.toISOString().slice(0, 16).replace("T", " ")}`;
+    return this.storage.createCaptureSession({ title, notes: input.notes?.trim() || null, createdAt: now.toISOString() });
+  }
+
+  /**
+   * Add a batch of photos to a session. Context is optional free text; no AI
+   * runs and no inventory entries are created. Photos start unassigned.
+   */
+  async addBatch(
+    sessionId: string,
+    files: IncomingPhoto[],
+    context: BatchContext
+  ): Promise<{ batch: CaptureBatch; photos: Photo[] }> {
+    if (!(await this.storage.getCaptureSession(sessionId))) {
+      throw new SessionNotFoundError();
+    }
+    // Validate before creating the batch, so a rejected upload leaves nothing behind
+    files.forEach((file) => {
+      const mime = getMimeTypeFromBuffer(file.buffer);
+      if (!mime || !EXTENSIONS[mime]) throw new InvalidPhotoError(file.originalFilename);
+    });
+    const cleaned = Object.fromEntries(
+      Object.entries(context)
+        .map(([key, value]) => [key, typeof value === "string" ? value.trim().slice(0, 200) : ""])
+        .filter(([, value]) => value)
+    ) as BatchContext;
+    const batch = await this.storage.createCaptureBatch({ sessionId, context: cleaned, createdAt: new Date().toISOString() });
+    const photos = await this.ingest(files, { batchId: batch.id, source: "batch_upload" });
+    return { batch, photos };
+  }
+
+  async listSessions(): Promise<SessionSummary[]> {
+    const snapshot = await this.storage.getEvidenceSnapshot();
+    const linked = new Set(snapshot.itemPhotos.map((link) => link.photoId));
+    return snapshot.sessions
+      .map((session) => {
+        const batchIds = new Set(snapshot.batches.filter((b) => b.sessionId === session.id).map((b) => b.id));
+        const sessionPhotos = snapshot.photos.filter((p) => p.batchId && batchIds.has(p.batchId));
+        return {
+          ...session,
+          batchCount: batchIds.size,
+          photoCount: sessionPhotos.length,
+          unassignedCount: sessionPhotos.filter((p) => !linked.has(p.id)).length,
+        };
+      })
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
   /** Photos with their source batch context and linked items */
