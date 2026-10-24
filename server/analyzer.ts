@@ -11,11 +11,17 @@
  */
 
 import type OpenAI from "openai";
+import {
+  VALUATION_ASSUMPTIONS,
+  VALUATION_SCOPES,
+  type ValuationAssumption,
+  type ValuationScope,
+} from "../shared/valuationVocabulary";
 
 export const IDENTIFY_PROMPT_VERSION = "identify-v3";
 export const IDENTIFY_MODEL_CHEAP = "gpt-4o-mini";
 export const IDENTIFY_MODEL_PREMIUM = "gpt-4o";
-export const VALUATION_PROMPT_VERSION = "valuation-v3";
+export const VALUATION_PROMPT_VERSION = "valuation-v4";
 export const VALUATION_MODEL = "gpt-4o";
 
 /** Upper bound for a plausible household-inventory estimate (USD) */
@@ -98,6 +104,10 @@ export interface ValuationResult {
   confidence: "low" | "medium" | "high" | null;
   rationale: string;
   missingInformation: string[];
+  /** "item" or "category" when estimated; null otherwise */
+  scope: ValuationScope | null;
+  /** Final assumptions, including server-derived ones; [] when not estimated */
+  assumptions: ValuationAssumption[];
   model: string;
   promptVersion: string;
   raw: unknown;
@@ -273,6 +283,9 @@ export function parseValuation(
 
   let amounts: { low: string; likely: string; high: string } | null = null;
   let confidence: (typeof CONFIDENCE_LEVELS)[number] | null = null;
+  // Scope and assumptions sent with a non-estimated outcome are ignored
+  let scope: ValuationScope | null = null;
+  let assumptions: ValuationAssumption[] = [];
 
   if (status === "estimated") {
     const low = parseAmount(parsed.low);
@@ -289,6 +302,15 @@ export function parseValuation(
       throw new InvalidValuationError("estimate without a valid confidence");
     }
     amounts = { low: low.toFixed(2), likely: likely.toFixed(2), high: high.toFixed(2) };
+
+    scope = pickEnum(parsed.scope, VALUATION_SCOPES);
+    if (!scope) {
+      throw new InvalidValuationError("estimate without a valid scope (item or category)");
+    }
+    if (scope === "category" && confidence === "high") {
+      throw new InvalidValuationError("a category baseline cannot have high confidence");
+    }
+    assumptions = deriveAssumptions(scope, parsed.assumptions);
   } else if ([parsed.low, parsed.likely, parsed.high].some(isProvided)) {
     throw new InvalidValuationError(`status "${status}" must not include any amount`);
   }
@@ -312,7 +334,37 @@ export function parseValuation(
       stripEvidenceClaims(cleanText(parsed.rationale, 1000)) ||
       "Model judgment based on the photos and identification.",
     missingInformation,
+    scope,
+    assumptions,
   };
+}
+
+/**
+ * Final assumptions for an estimate. The model may choose only
+ * as_is_untested; unattributed is derived from scope "category" and
+ * visible_condition_only applies to every photo-based estimate. Unknown
+ * tokens, a non-array value, and unattributed on an item estimate are invalid.
+ */
+function deriveAssumptions(scope: ValuationScope, raw: unknown): ValuationAssumption[] {
+  if (raw !== undefined && raw !== null && !Array.isArray(raw)) {
+    throw new InvalidValuationError("assumptions must be a list");
+  }
+  const chosen = new Set<ValuationAssumption>();
+  for (const token of (raw as unknown[] | null | undefined) ?? []) {
+    const assumption = pickEnum(token, VALUATION_ASSUMPTIONS);
+    if (!assumption) {
+      throw new InvalidValuationError(`unknown assumption ${JSON.stringify(token)}`);
+    }
+    if (assumption === "unattributed" && scope === "item") {
+      throw new InvalidValuationError('an item estimate cannot be "unattributed"; use scope "category"');
+    }
+    chosen.add(assumption);
+  }
+  if (scope === "category") {
+    chosen.add("unattributed");
+  }
+  chosen.add("visible_condition_only");
+  return VALUATION_ASSUMPTIONS.filter((assumption) => chosen.has(assumption));
 }
 
 const EVIDENCE_CLAIM_PATTERN =
@@ -474,7 +526,7 @@ Rules:
 }
 
 function getValuationPrompt(input: ValuationInput): string {
-  return `You are assessing the secondhand resale value of an item in a personal home inventory. The attached photos show the item. It was identified as:
+  return `You are giving an indicative private-party secondhand resale value for an item in a personal home inventory: roughly what a private seller could expect from a used sale. It is not an insurance appraisal, retail price, replacement cost, or a valuation from verified comparable sales. The attached photos show the item. It was identified as:
 - Name: ${input.name}
 - Category: ${input.category}
 - Description: ${input.description || "(none)"}
@@ -483,22 +535,28 @@ function getValuationPrompt(input: ValuationInput): string {
 Work in this order:
 1. Marketability. Is there a realistic secondhand market where someone would pay money for this specific item? Ordinary natural objects (rocks, sticks, shells), worn-out or disposable goods, and items nobody buys used are "nonmarketable". If the item cannot be pinned down precisely enough to judge whether it would sell at all (for example an antique whose maker, age, or authenticity is not visible), use "uncertain".
 2. Baseline before provenance. When an object has an ordinary secondhand market independent of its maker or provenance, assess whether the available evidence supports a defensible baseline resale range. If it does, provide a conservative range, explicitly excluding unverified collectible or provenance premiums, and list the maker, provenance, or other unverified factors in missingInformation. If the evidence is insufficient even for that baseline, return "insufficient_information" and identify the missing evidence. Being in a marketable category alone does not require a price.
-   If you judged this specific item "marketable", an unknown maker, a partly visible model number, or unverified working condition is not by itself a reason for "insufficient_information": give a conservative, possibly wide baseline range with low confidence, and list those factors in missingInformation. Reserve "insufficient_information" for items whose basic identity, usability, authenticity, material, or permissibility of sale cannot be judged from the photos.
-3. Then choose exactly one outcome:
-   - "estimated": marketability "marketable", and you can give a defensible range for a typical private-party used sale in the visible condition (a conservative baseline is acceptable).
-   - "nonmarketable": marketability "nonmarketable"; no realistic resale market. Give no price.
-   - "insufficient_information": marketability "marketable" or "uncertain"; a value may exist but not even a baseline range can be judged from these photos. Give no price, and list the specific evidence that would be needed.
+   If you judged this specific item "marketable", an unknown maker, a partly visible model number, or unverified working condition is not by itself a reason for "insufficient_information": give a conservative, possibly wide baseline range with low confidence, and list those factors in missingInformation. Reserve "insufficient_information" for items whose basic identity, usability, authenticity, material, or permissibility of sale cannot be judged from the photos, and for the excluded classes below when no item estimate is supportable.
+3. Scope of the estimate:
+   - "item": the identification is specific (a legible brand, model, or series, or a clearly identifiable product) and the range reflects that specific item.
+   - "category": the type of object is clear but its maker, model, or provenance is not. The range is a conservative baseline for a typical unattributed used item of that type, excluding any maker, collectible, authenticity, or provenance premium; list what would allow an item estimate (for example a maker's mark) in missingInformation.
+   Never use "category" for antiques, art, jewelry, precious metals, or items made of fur, hide, ivory, feathers, or other animal materials: their value is not a typical baseline. For these, give an "item" estimate only if the item itself supports one; otherwise use "insufficient_information".
+4. Then choose exactly one outcome:
+   - "estimated": marketability "marketable"; a defensible indicative range for a typical private-party used sale in the visible condition, with a scope.
+   - "nonmarketable": marketability "nonmarketable"; no realistic resale market. Give no price and no scope.
+   - "insufficient_information": marketability "marketable" or "uncertain"; not even a category baseline can be judged from these photos. Give no price and no scope, and list the specific evidence that would be needed.
 
 Return JSON with exactly these fields:
 {
   "marketability": "marketable" | "nonmarketable" | "uncertain",
   "marketabilityReason": "One sentence.",
   "status": "estimated" | "nonmarketable" | "insufficient_information",
+  "scope": "item" | "category" | null,
+  "assumptions": ["as_is_untested"] or [],
   "low": "USD decimal string, or null",
   "likely": "USD decimal string, or null",
   "high": "USD decimal string, or null",
   "confidence": "low" | "medium" | "high" | null,
-  "rationale": "1-2 sentences explaining your judgment. For a baseline range, say that it excludes any collectible or provenance premium.",
+  "rationale": "1-2 sentences explaining your judgment. Name the scope; for a category baseline, say that it excludes any maker, collectible, or provenance premium.",
   "missingInformation": ["specific evidence that would make the estimate possible or more reliable, e.g. a clearer photo of a label, or confirmation that it works"]
 }
 
@@ -506,7 +564,9 @@ Rules:
 - You have NOT looked up any listings, sales, auctions, or price guides. Do not claim or imply that you checked eBay, sold listings, comparable sales, or any other data source, and do not invent comparable sales, marketplace research, or pricing evidence. Describe your reasoning as your own judgment.
 - Never use 0 to mean unknown. If you cannot give a price, use null and the matching status.
 - Do not invent a price for a nonmarketable item.
-- Tools and electronics: working condition and battery health are usually unverified from photos. Price the item as untested or as-is with low or medium confidence, list them in missingInformation, and do not use "high" confidence while functionality or condition is unverified.
+- "as_is_untested" means functionality is unknown, not known to be faulty. Include it when the item has a powered or mechanical function that cannot be verified from the photos. The range must reflect that it may or may not work; do not price it as defective or for parts unless the photos show damage. Do not include any other assumption; the server records the rest.
+- Tools and electronics: working condition and battery health are usually unverified from photos. Price the item as untested or as-is with low or medium confidence (functionality unknown, not known to be faulty), list them in missingInformation, and do not use "high" confidence while functionality or condition is unverified.
+- A "category" baseline must use "low" or "medium" confidence, never "high".
 - Items of fur, hide, feathers, ivory, or other animal materials: do not identify the species or material beyond what is visible, and do not state that resale restrictions apply. If the material, origin, or permissibility of resale is uncertain and matters to value, list it in missingInformation as something to verify.
 - Be conservative: private-party used prices, not retail. Prefer an honest wide range over false precision.`;
 }
@@ -546,6 +606,8 @@ export class MockAnalyzer implements IAnalyzer {
       confidence: "medium",
       rationale: "Mock valuation for testing",
       missingInformation: [],
+      scope: "item",
+      assumptions: ["visible_condition_only"],
       model: "mock",
       promptVersion: VALUATION_PROMPT_VERSION,
       raw: null,

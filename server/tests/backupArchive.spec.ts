@@ -201,6 +201,38 @@ describe("backup schema compatibility", () => {
     expect(restored[0].estimatedValue).toBe("80.00");
   });
 
+  it("preserves v4 scope and assumptions alongside an older valuation through an archive", async () => {
+    const dir = await makeTempDir();
+    const v4 = createValuation({ scope: "category", confidence: "low", assumptions: ["unattributed", "visible_condition_only"] });
+    const v3 = createValuation(); // no scope: basis not recorded
+    const items = [
+      createItem(0, { imageUrl: "/objects/items/v4.jpg", valuation: v4 }),
+      createItem(1, { imageUrl: "/objects/items/v3.jpg", valuation: v3 }),
+    ];
+    const imageFiles = await writeImageFiles(
+      dir,
+      { "/objects/items/v4.jpg": randomBytes(40), "/objects/items/v3.jpg": randomBytes(41) },
+      items
+    );
+    const archivePath = await writeArchive(dir, items, imageFiles);
+
+    const { items: restored } = await verifyBackupArchive({
+      archivePath,
+      restoreUploadsDir: path.join(dir, "restored"),
+    });
+    const byId = new Map(restored.map((item) => [item.id, item]));
+
+    expect(byId.get(items[0].id)?.valuation).toEqual(v4);
+    expect(byId.get(items[1].id)?.valuation).toEqual(v3);
+    expect(byId.get(items[1].id)?.valuation).not.toHaveProperty("scope");
+
+    const csv = inventoryItemsToCsv(items).split("\n").map((row) => row.split(",").map((cell) => cell.replace(/^"|"$/g, "")));
+    const column = (name: string) => csv[0].indexOf(name);
+    expect(csv[1][column("Valuation Scope")]).toBe("category");
+    expect(csv[1][column("Assumptions")]).toBe("unattributed; visible_condition_only");
+    expect(csv[2][column("Valuation Scope")]).toBe("unrecorded");
+  });
+
   it("still accepts 0002 archives that predate identification and valuation", async () => {
     const dir = await makeTempDir();
     const items = [createItem(0, { imageUrl: "/objects/items/old.jpg", estimatedValue: "45.00" })];

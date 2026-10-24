@@ -498,6 +498,8 @@ export class FakeAnalyzer implements IAnalyzer {
       confidence: "medium",
       rationale: "Test valuation",
       missingInformation: [],
+      scope: "item",
+      assumptions: ["visible_condition_only"],
       model: "fake",
       promptVersion: "valuation-test",
       raw: null,

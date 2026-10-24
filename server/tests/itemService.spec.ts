@@ -264,6 +264,8 @@ describe("ItemService", () => {
         },
         promptVersion: "valuation-test",
         staleAt: null,
+        scope: "item",
+        assumptions: ["visible_condition_only"],
       });
       expect(updated.valuation?.evidence.note).toContain("No marketplace or sales data");
     });
@@ -363,6 +365,9 @@ describe("ItemService", () => {
         ["an estimate with no range", { status: "estimated", marketability: "marketable", confidence: "medium" }],
         ["status contradicting marketability", { status: "nonmarketable", marketability: "marketable" }],
         ["a price on insufficient information", { status: "insufficient_information", marketability: "uncertain", likely: "200" }],
+        ["a v4 estimate without a scope", { status: "estimated", marketability: "marketable", low: "10", likely: "20", high: "30", confidence: "low" }],
+        ["a high-confidence category baseline", { status: "estimated", marketability: "marketable", scope: "category", low: "1", likely: "2", high: "3", confidence: "high" }],
+        ["an unknown assumption", { status: "estimated", marketability: "marketable", scope: "item", assumptions: ["authentic"], low: "10", likely: "20", high: "30", confidence: "low" }],
       ])("should reject %s and keep the record unchanged", async (_label, output) => {
         const premium = { chat: { completions: { create: vi.fn().mockResolvedValue(respond(output)) } } };
         const realAnalyzer = new OpenAIAnalyzer({} as never, premium as never);

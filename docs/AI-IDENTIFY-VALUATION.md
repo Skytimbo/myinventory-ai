@@ -42,6 +42,27 @@ Uses `gpt-4o` with up to four photos and the current identification. The model m
 
 `not_evaluated` is not stored: it is the absence of a valuation.
 
+### What an estimate means (valuation-v4)
+
+Every estimate is an **indicative private-party secondhand resale value**: roughly what a private seller could expect from a used sale. It is not an insurance appraisal, retail price, replacement cost, or a valuation from verified comparable sales. It is AI judgment from the photos; condition, authenticity, and market are not verified.
+
+Each estimate made under `valuation-v4` records its **scope** and **assumptions**:
+
+| Scope | Meaning |
+|---|---|
+| `item` | An indicative range for the specifically identified item (for example a legible brand and model) |
+| `category` | A baseline for a typical unattributed used item of that type, excluding any maker, collectible, authenticity, or provenance premium |
+
+| Assumption | Set by | Meaning |
+|---|---|---|
+| `as_is_untested` | the model | Functionality is unknown, **not** known to be faulty; the range reflects that it may or may not work |
+| `unattributed` | the server, exactly when scope is `category` | Maker and provenance unknown; no premium included |
+| `visible_condition_only` | the server, on every estimate | Condition was judged from photos only |
+
+Category baselines are never used for antiques, art, jewelry, precious metals, or items made of fur, hide, ivory, feathers, or other animal materials; those get an item estimate only if the item itself supports one, otherwise `insufficient_information`. Ordinary secondhand objects remain eligible for category baselines when defensible.
+
+Estimates made before `valuation-v4` have no recorded scope. They are shown as **"Basis not recorded"** and are never reclassified or backfilled; re-estimating an item records its basis.
+
 The server validates every response and never reinterprets one. `nonmarketable` and `insufficient_information` are only ever the model's explicit judgments; the server never derives them from missing, zero, or invalid amounts. A response that breaks any rule below is rejected as invalid model output (`InvalidValuationError`, returned as `502 VALUATION_FAILED`), and the stored record, including any earlier valuation, is left unchanged.
 
 - `status` and `marketability` must both be present and valid, and consistent with each other:
@@ -53,7 +74,8 @@ The server validates every response and never reinterprets one. `nonmarketable` 
   | `insufficient_information` | `marketable` or `uncertain` |
 
 - `estimated` needs `low`, `likely`, and `high`, all positive (> $0), with `low ≤ likely ≤ high`, and a confidence of `low`, `medium`, or `high`. Zero, negative, missing, non-numeric, or reversed amounts are invalid. Sub-dollar positive amounts are allowed.
-- `nonmarketable` and `insufficient_information` must not include any amount, including `0`. A confidence level sent with them is ignored.
+- `nonmarketable` and `insufficient_information` must not include any amount, including `0`. A confidence level, scope, or assumptions sent with them are ignored (stored as `null` / `[]`).
+- (`valuation-v4`) `estimated` needs `scope` `item` or `category`. Assumptions must come from the controlled list; `unattributed` on an `item` estimate is invalid; a `category` baseline cannot have `high` confidence. The server adds `unattributed` to category baselines and `visible_condition_only` to every estimate.
 
 Two things are still adjusted rather than rejected:
 
@@ -74,7 +96,15 @@ Rows created before migration 0003 may have `estimated_value` / `value_confidenc
 
 ## Totals
 
-Dashboard totals, averages, and the value filter use only **current** estimates: status `estimated` and not stale. Stale, legacy, nonmarketable, insufficient, and not-evaluated items are excluded and counted separately. With no current estimates, the dashboard shows "—", not `$0.00`.
+The dashboard shows indicative resale totals in separate buckets. Each item has one current valuation, so it is counted in at most one bucket:
+
+- **Item estimates:** current (non-stale) `item`-scope estimates.
+- **Category baselines:** current (non-stale) `category`-scope estimates.
+- **Combined indicative total:** item estimates plus category baselines, clearly labelled.
+
+Excluded from all monetary totals, and counted separately: stale estimates, legacy amounts, `nonmarketable`, `insufficient_information`, not evaluated, and current estimates whose **basis was not recorded** (made before `valuation-v4`). Empty totals show "—", not `$0.00`. The value filter uses every current estimate's likely value, including those without a recorded basis; filtering is not totalling.
+
+CSV exports (in-app and in backups) include `Valuation Scope` (`item`, `category`, `unrecorded`, or blank) and `Assumptions`; the PDF export describes each estimate's scope and assumptions and states that it is an indicative AI judgment, not an appraisal.
 
 All of this is derived in one place: `shared/valuation.ts`.
 
@@ -138,7 +168,7 @@ pnpm ai:eval ai-eval-photos --identify-only --out   # Identify only, no valuatio
 
 `--out` with no directory writes to `ai-eval-results/run-<timestamp>/results.json`. Each run gets a new directory; earlier runs are never overwritten. The file records:
 
-- the run: timestamps, mode, model names, prompt/contract versions (currently `identify-v3`, `valuation-v3`), and a credential-free description of the configuration;
+- the run: timestamps, mode, model names, prompt/contract versions (currently `identify-v3`, `valuation-v4`), and a credential-free description of the configuration;
 - per item (identified by folder name): photo file names, sizes, and SHA-256 hashes;
 - **Identify** and **Estimate Value** as separate actions, each with timestamps, model, prompt version, parsed result, and error;
 - every raw OpenAI request and response, labelled by action. Image data is replaced by MIME type, size, and hash.
@@ -174,7 +204,11 @@ Follow-up: `identify-v2` and `valuation-v2` (commit `d9123f5`, deployed 2026-10-
 
 The stored records show both refusals were the model's own output (validation accepts `insufficient_information` with `marketable`); no validator rejection or application fallback was involved. Likely causes: the refusal option in `valuation-v2` ended with an example list that the mug copied verbatim and the drill partly copied; the tools rule described condition as something that "cannot be established", the same wording as the refusal option; and the bar for a "defensible" baseline was not defined.
 
-`identify-v3` / `valuation-v3` respond: tags carry only visible or legible facts; an item judged marketable gets a conservative, possibly wide, low-confidence baseline unless its basic identity, usability, authenticity, material, or permissibility of sale cannot be judged; tools are priced as untested or as-is; the example list was removed from the refusal option. Not yet observed in production.
+`identify-v3` / `valuation-v3` respond: tags carry only visible or legible facts; an item judged marketable gets a conservative, possibly wide, low-confidence baseline unless its basic identity, usability, authenticity, material, or permissibility of sale cannot be judged; tools are priced as untested or as-is; the example list was removed from the refusal option.
+
+**Retest under `valuation-v3` (manual, production):** the DeWalt drill received $30–$70, likely $50, low confidence, sold as-is. The ceramic mug stayed `insufficient_information`: the model acknowledged an ordinary secondhand market but declined a baseline without a maker's mark. River rock and fur boots were not retested.
+
+`valuation-v4` (design change, not prompt tuning) makes the basis of every estimate explicit: scope (`item` or `category`) and controlled assumptions, with separate dashboard buckets. See "What an estimate means" above. Not yet observed in production.
 
 ## Production deployment runbook
 

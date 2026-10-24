@@ -406,6 +406,8 @@ function toValuation(
     confidence: result.confidence,
     rationale: result.rationale,
     missingInformation: result.missingInformation,
+    scope: result.scope,
+    assumptions: result.assumptions,
     // Set here, never from model output
     evidence: { basis: "model_judgment", note: MODEL_JUDGMENT_NOTE },
     basedOn: context.basedOn,

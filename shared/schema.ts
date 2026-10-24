@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { pgTable, text, uuid, decimal, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+import { VALUATION_ASSUMPTIONS, VALUATION_SCOPES } from "./valuationVocabulary";
 
 export const analysisMetadataSchema = z
   .object({
@@ -34,9 +35,17 @@ export const identificationSchema = z
 
 export type Identification = NonNullable<z.infer<typeof identificationSchema>>;
 
+export {
+  VALUATION_ASSUMPTIONS,
+  VALUATION_SCOPES,
+  type ValuationAssumption,
+  type ValuationScope,
+} from "./valuationVocabulary";
+
 /**
  * Result of the Estimate Value action (migration 0003).
  * "not_evaluated" is never stored: it is the absence of a valuation.
+ * Every estimate is an indicative private-party secondhand resale value.
  */
 export const valuationSchema = z
   .object({
@@ -66,6 +75,10 @@ export const valuationSchema = z
     promptVersion: z.string(),
     staleAt: z.string().nullable(),
     staleReason: z.string().nullable(),
+    // valuation-v4+. Absent on earlier records, which have no recorded basis
+    // and must not be reinterpreted. null/[] on non-estimated outcomes.
+    scope: z.enum(VALUATION_SCOPES).nullable().optional(),
+    assumptions: z.array(z.enum(VALUATION_ASSUMPTIONS)).optional(),
   })
   .nullable();
 
