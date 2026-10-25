@@ -406,6 +406,76 @@ describe("ItemService", () => {
     });
   });
 
+  describe("editItem", () => {
+    async function identified() {
+      return (await service.createItem({ files: [makeFile()] })).item; // FakeAnalyzer: "Test Item" / "Test"
+    }
+
+    it("records edited fields as user assertions without touching others", async () => {
+      const item = await identified();
+
+      const edited = await service.editItem(item.id, {
+        fields: { name: "Dad's drill", location: "Garage", notes: "Lent to Sam" },
+      });
+
+      expect(edited).toMatchObject({ name: "Dad's drill", location: "Garage", notes: "Lent to Sam", category: "Test" });
+      expect(Object.keys(edited.userAssertions ?? {}).sort()).toEqual(["location", "name", "notes"]);
+      expect(edited.userAssertions?.name).toEqual({ source: "user", assertedAt: expect.any(String) });
+    });
+
+    it("confirms current values as they are, upgrading capture context to the user's own", async () => {
+      const item = await identified();
+      await storage.updateItem(item.id, {
+        userAssertions: { category: { source: "batch_context", assertedAt: "2026-10-01T00:00:00.000Z" } },
+      });
+
+      const confirmed = await service.editItem(item.id, { confirm: ["name", "category"] });
+
+      expect(confirmed.name).toBe("Test Item");
+      expect(confirmed.userAssertions?.name?.source).toBe("user");
+      expect(confirmed.userAssertions?.category?.source).toBe("user");
+    });
+
+    it("keeps user edits through re-identification and records the AI's differing values", async () => {
+      const item = await identified();
+      await service.editItem(item.id, { fields: { name: "Dad's drill", category: "Tools" } });
+
+      const reidentified = await service.identifyItem(item.id);
+
+      expect(reidentified).toMatchObject({ name: "Dad's drill", category: "Tools", description: "Test description" });
+      expect(reidentified.identification?.suggestions).toEqual({ name: "Test Item", category: "Test" });
+    });
+
+    it("applies an AI suggestion in one step and records it as the user's choice", async () => {
+      const item = await identified();
+      await service.editItem(item.id, { fields: { name: "Thing" } });
+      await service.identifyItem(item.id);
+
+      const accepted = await service.editItem(item.id, { acceptSuggestions: ["name"] });
+
+      expect(accepted.name).toBe("Test Item");
+      expect(accepted.userAssertions?.name?.source).toBe("user");
+      expect(accepted.identification?.suggestions).toEqual({});
+      await expect(service.editItem(item.id, { acceptSuggestions: ["name"] })).rejects.toThrow("No suggestion for name");
+    });
+
+    it("marks a current estimate stale when what the item is changes, but not for location or notes", async () => {
+      const item = await identified();
+      await service.estimateValue(item.id);
+
+      const moved = await service.editItem(item.id, { fields: { location: "Attic", notes: "Box 3" } });
+      expect(moved.valuation?.staleAt).toBeNull();
+
+      const renamed = await service.editItem(item.id, { fields: { name: "Hammer drill" } });
+      expect(renamed.valuation).toMatchObject({ staleReason: "user_edited", likely: "10.00" });
+      expect(renamed.valuation?.staleAt).toEqual(expect.any(String));
+    });
+
+    it("throws if item not found", async () => {
+      await expect(service.editItem("nonexistent-id", { confirm: ["name"] })).rejects.toThrow("Item not found");
+    });
+  });
+
   describe("getItem", () => {
     it("should return item by id", async () => {
       const file = makeFile();

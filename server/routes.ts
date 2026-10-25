@@ -53,6 +53,32 @@ const createSessionBody = z.object({
   notes: z.string().max(2000).nullable().optional(),
 });
 
+const ASSERTABLE = ["name", "description", "category", "tags", "location", "notes"] as const;
+const optionalText = (max: number) =>
+  z.string().trim().max(max).nullable().transform((value) => (value ? value : null));
+
+const editItemBody = z
+  .object({
+    fields: z
+      .object({
+        name: z.string().trim().min(1).max(120),
+        description: z.string().trim().max(2000),
+        category: z.string().trim().min(1).max(60),
+        tags: z
+          .array(z.string().trim().toLowerCase().min(1).max(40))
+          .max(20)
+          .transform((tags) => Array.from(new Set(tags))),
+        location: optionalText(200),
+        notes: optionalText(4000),
+      })
+      .partial()
+      .strict()
+      .optional(),
+    confirm: z.array(z.enum(ASSERTABLE)).max(ASSERTABLE.length).optional(),
+    acceptSuggestions: z.array(z.enum(["name", "description", "category", "tags"])).max(4).optional(),
+  })
+  .strict();
+
 const createFromPhotosBody = z.object({
   photoIds: z.array(z.string().uuid()).min(1).max(10),
   name: z.string().max(120).optional(),
@@ -363,6 +389,28 @@ export async function registerRoutes(
     "/api/photos",
     wrap(async (req, res) => {
       res.json(await photoService.listPhotos({ unassigned: req.query.unassigned === "true" }));
+    })
+  );
+
+  // PATCH /api/items/:id - user edits and one-click confirmations
+  app.patch(
+    "/api/items/:id",
+    wrap(async (req, res) => {
+      const body = editItemBody.safeParse(req.body ?? {});
+      if (!body.success) {
+        throw new ApiError(400, "INVALID_EDIT", body.error.issues[0]?.message ?? "Invalid edit");
+      }
+      try {
+        res.json(await itemService.editItem(req.params.id, body.data));
+      } catch (err) {
+        if (err instanceof Error && err.message === "Item not found") {
+          throw new ApiError(404, "NOT_FOUND", "Item not found");
+        }
+        if (err instanceof Error && err.message.startsWith("No suggestion for")) {
+          throw new ApiError(409, "NO_SUGGESTION", err.message);
+        }
+        throw err;
+      }
     })
   );
 

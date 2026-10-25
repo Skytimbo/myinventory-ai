@@ -68,11 +68,29 @@ export interface CreateItemResult {
 /**
  * Interface for item service operations
  */
+/** User edits and confirmations (Milestone 1, stage 3) */
+export interface EditItemInput {
+  /** New values; each one becomes a user assertion */
+  fields?: Partial<{
+    name: string;
+    description: string;
+    category: string;
+    tags: string[];
+    location: string | null;
+    notes: string | null;
+  }>;
+  /** Confirm current values as they are (no retyping) */
+  confirm?: AssertableField[];
+  /** Apply the AI's kept suggestion for these fields, as the user's choice */
+  acceptSuggestions?: Array<"name" | "description" | "category" | "tags">;
+}
+
 export interface IItemService {
   createItem(options: CreateItemOptions): Promise<CreateItemResult>;
   identifyItem(itemId: string): Promise<InventoryItem>;
   createItemFromPhotos(input: { photoIds: string[]; name?: string; identify?: boolean }): Promise<CreateItemResult>;
   estimateValue(itemId: string): Promise<InventoryItem>;
+  editItem(itemId: string, input: EditItemInput): Promise<InventoryItem>;
   getItem(id: string): Promise<InventoryItem | undefined>;
   getItems(): Promise<InventoryItem[]>;
   deleteItem(id: string): Promise<boolean>;
@@ -362,6 +380,66 @@ export class ItemService implements IItemService {
   /**
    * Get a single item by ID
    */
+  /**
+   * Apply user edits and confirmations. Every edited, confirmed, or accepted
+   * field is recorded as a user assertion, which AI identification never
+   * overwrites. Changing what the item is (name, description, category)
+   * marks a current estimate stale, because it described the old identity.
+   *
+   * @throws Error("Item not found"), Error("No suggestion for <field>")
+   */
+  async editItem(itemId: string, input: EditItemInput): Promise<InventoryItem> {
+    const item = await this.storage.getItem(itemId);
+    if (!item) {
+      throw new Error("Item not found");
+    }
+
+    const now = new Date().toISOString();
+    const userAssertion = { source: "user" as const, assertedAt: now };
+    const updates: Record<string, unknown> = {};
+    const assertions: UserAssertions = { ...(item.userAssertions ?? {}) };
+
+    for (const [field, value] of Object.entries(input.fields ?? {})) {
+      updates[field] = value;
+      assertions[field as AssertableField] = userAssertion;
+    }
+
+    const suggestions = { ...(item.identification?.suggestions ?? {}) };
+    for (const field of input.acceptSuggestions ?? []) {
+      if (suggestions[field] === undefined) {
+        throw new Error(`No suggestion for ${field}`);
+      }
+      updates[field] = suggestions[field];
+      assertions[field] = userAssertion;
+      delete suggestions[field];
+    }
+
+    for (const field of input.confirm ?? []) {
+      assertions[field] = userAssertion;
+    }
+
+    const identityChanged = (["name", "description", "category"] as const).some(
+      (field) => field in updates && updates[field] !== item[field]
+    );
+    const valuation =
+      identityChanged && item.valuation && !item.valuation.staleAt
+        ? { ...item.valuation, staleAt: now, staleReason: "user_edited" }
+        : item.valuation;
+
+    const updated = await this.storage.updateItem(itemId, {
+      ...updates,
+      userAssertions: assertions,
+      valuation,
+      ...(input.acceptSuggestions?.length && item.identification
+        ? { identification: { ...item.identification, suggestions } }
+        : {}),
+    });
+    if (!updated) {
+      throw new Error("Failed to update item");
+    }
+    return updated;
+  }
+
   async getItem(id: string): Promise<InventoryItem | undefined> {
     return this.storage.getItem(id);
   }

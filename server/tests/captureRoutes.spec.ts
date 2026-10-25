@@ -214,3 +214,63 @@ describe("batch capture", () => {
     });
   });
 });
+
+describe("PATCH /api/items/:id", () => {
+  const original = process.env.INVENTORY_PASSWORD;
+  beforeEach(() => {
+    process.env.INVENTORY_PASSWORD = PASSWORD;
+  });
+  afterEach(() => {
+    if (original === undefined) delete process.env.INVENTORY_PASSWORD;
+    else process.env.INVENTORY_PASSWORD = original;
+  });
+
+  async function withItem() {
+    const setup = await createApp();
+    const agent = await login(setup.app);
+    const session = (await agent.post("/api/capture-sessions").send({}).expect(201)).body;
+    const { photos } = (await uploadBatch(agent, session.id, [1]).expect(201)).body;
+    const item = (await agent.post("/api/items/from-photos").send({ photoIds: [photos[0].id] }).expect(201)).body;
+    return { ...setup, agent, item };
+  }
+
+  it("requires sign-in", async () => {
+    const { app } = await createApp();
+    await request(app).patch("/api/items/x").send({ confirm: ["name"] }).expect(401);
+  });
+
+  it("saves edits with normalized tags and empty optional text as null", async () => {
+    const { agent, item } = await withItem();
+
+    const edited = (
+      await agent
+        .patch(`/api/items/${item.id}`)
+        .send({ fields: { name: "  Socket set ", tags: ["Tools", "tools", " Metric "], location: "  ", notes: "Garage shelf" } })
+        .expect(200)
+    ).body;
+
+    expect(edited).toMatchObject({ name: "Socket set", tags: ["tools", "metric"], location: null, notes: "Garage shelf" });
+    expect(Object.keys(edited.userAssertions).sort()).toEqual(["location", "name", "notes", "tags"]);
+  });
+
+  it.each([
+    ["an empty name", { fields: { name: "  " } }],
+    ["an unknown field", { fields: { barcodeData: "X" } }],
+    ["an unknown confirmation", { confirm: ["barcodeData"] }],
+    ["an unknown top-level key", { valuation: null }],
+  ])("rejects %s", async (_label, body) => {
+    const { agent, item } = await withItem();
+
+    const response = await agent.patch(`/api/items/${item.id}`).send(body).expect(400);
+
+    expect(response.body.code).toBe("INVALID_EDIT");
+  });
+
+  it("returns 404 for an unknown item and 409 when there is no suggestion to accept", async () => {
+    const { agent, item } = await withItem();
+
+    await agent.patch("/api/items/00000000-0000-4000-8000-000000000000").send({ confirm: ["name"] }).expect(404);
+    const response = await agent.patch(`/api/items/${item.id}`).send({ acceptSuggestions: ["name"] }).expect(409);
+    expect(response.body.code).toBe("NO_SUGGESTION");
+  });
+});
