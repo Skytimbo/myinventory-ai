@@ -6,6 +6,8 @@
  *                           create the local database, apply the schema, and seed
  *                           synthetic records + generated images if it is empty
  *   pnpm dev:reset          same, but first remove existing rows and dev photos
+ *   pnpm dev:reset --empty  remove rows and dev photos without seeding, e.g. before
+ *                           `pnpm restore:local <archive>`
  *
  * Reads DATABASE_URL only from .env.development (never from the shell or .env)
  * and refuses anything that is not PostgreSQL on this machine. Never prints
@@ -19,6 +21,7 @@ import dotenv from 'dotenv';
 import { Pool, type PoolClient } from 'pg';
 import { assertConnectedToLocalServer, assertLocalDatabaseUrl } from '../server/databaseTarget';
 import { connectLocalDatabase, exitWithSafeError } from './_localDb';
+import { registerPhotos } from './_registerPhotos';
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const ENV_FILE = path.join(ROOT, '.env.development');
@@ -32,6 +35,10 @@ const SCHEMA_FILES = [
 
 async function main() {
   const reset = process.argv.includes('--reset');
+  const empty = process.argv.includes('--empty');
+  if (empty && !reset) {
+    throw new Error('--empty is only valid with --reset: pnpm dev:reset --empty');
+  }
 
   if (!existsSync(ENV_FILE)) {
     copyFileSync(EXAMPLE_FILE, ENV_FILE);
@@ -65,7 +72,9 @@ async function main() {
     }
 
     const { rows } = await client.query('SELECT count(*)::int AS count FROM inventory_items');
-    if (rows[0].count > 0) {
+    if (empty) {
+      console.log(`"${database}" left empty (no synthetic data). Restore with \`pnpm restore:local <archive>\`.`);
+    } else if (rows[0].count > 0) {
       console.log(`"${database}" already has ${rows[0].count} item(s); not seeding. Use \`pnpm dev:reset\` to start over.`);
     } else {
       const seeded = await seed(client, uploadsDir);
@@ -78,25 +87,6 @@ async function main() {
 
   await registerPhotos(url, env.LOCAL_STORAGE_DIR || './uploads-dev');
   console.log(`\nNext: pnpm dev:local, then open http://localhost:${env.PORT || '5000'}`);
-}
-
-/** Record existing item photos as evidence, using the app's own PhotoService */
-async function registerPhotos(url: string, storageDir: string): Promise<void> {
-  process.env.DATABASE_URL = url;
-  process.env.LOCAL_STORAGE_DIR = storageDir;
-  const { DatabaseStorage } = await import('../server/storage');
-  const { ObjectStorageService } = await import('../server/objectStorage');
-  const { PhotoService } = await import('../server/photoService');
-  const storage = await DatabaseStorage.create();
-  try {
-    const result = await new PhotoService(storage, new ObjectStorageService()).registerExistingItemPhotos();
-    console.log(
-      `✓ Photo evidence: ${result.registered} registered, ${result.linked} linked, ` +
-        `${result.alreadyRegistered} already registered, ${result.missing.length} missing`
-    );
-  } finally {
-    await storage.close();
-  }
 }
 
 /** Create the database if missing, via the local maintenance database */

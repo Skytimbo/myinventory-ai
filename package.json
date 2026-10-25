@@ -27,6 +27,7 @@
     "db:seed": "tsx scripts/db-seed.ts",
     "backup": "tsx scripts/backup.ts",
     "restore:verify": "tsx scripts/restore-verify.ts",
+    "restore:local": "tsx scripts/restore-local.ts",
     "ai:eval": "tsx scripts/ai-eval.ts",
     "test": "pnpm test:server && pnpm test:client",
     "test:server": "vitest run --config server/vitest.config.ts",

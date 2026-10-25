@@ -22,13 +22,15 @@ import { validateUploadedFile } from "./fileValidation";
 import { openAIHealthCheck } from "./analyzer";
 import { getOpenAIEnvHealth } from "./health/openaiHealth";
 import {
+  BackupIntegrityError,
   collectImageReferences,
   createBackupArchivePlan,
+  toBackupEvidence,
   toBackupInventoryItem,
   writeBackupArchive,
   type BackupImageFile,
 } from "./backupArchive";
-import type { BackupInventoryItem } from "../scripts/backup-utils";
+import type { BackupEvidence, BackupInventoryItem } from "../scripts/backup-utils";
 
 declare module "express-session" {
   interface SessionData {
@@ -89,7 +91,7 @@ export async function registerRoutes(
   app: Express,
   services: AppServices
 ): Promise<Server> {
-  const { itemService, objectStorage, photoService } = services;
+  const { itemService, objectStorage, photoService, storage } = services;
   const auth = createAuthMiddleware();
   const loginRateLimit = createRateLimiter({
     windowMs: 15 * 60 * 1000,
@@ -192,13 +194,20 @@ export async function registerRoutes(
     backupRateLimit,
     wrap(async (req, res) => {
       const items = (await itemService.getItems()).map(toBackupInventoryItem);
-      const imageFiles = await resolveLocalBackupImageFiles(items, objectStorage);
+      const evidence = toBackupEvidence(await storage.getEvidenceSnapshot());
+      const imageFiles = await resolveLocalBackupImageFiles(items, evidence, objectStorage);
       const createdAt = new Date().toISOString();
       const plan = await createBackupArchivePlan({
         items,
+        evidence,
         imageFiles,
         sourceAppUrl: getRequestAppUrl(req),
         createdAt,
+      }).catch((error: unknown) => {
+        if (error instanceof BackupIntegrityError) {
+          throw new ApiError(500, "BACKUP_INTEGRITY", error.message);
+        }
+        throw error;
       });
 
       res.set({
@@ -630,12 +639,13 @@ function normalizeFiles(
 
 async function resolveLocalBackupImageFiles(
   items: BackupInventoryItem[],
+  evidence: BackupEvidence,
   objectStorage: AppServices["objectStorage"]
 ): Promise<BackupImageFile[]> {
   const imageFiles: BackupImageFile[] = [];
   const missingImageReferences: string[] = [];
 
-  for (const reference of collectImageReferences(items)) {
+  for (const reference of collectImageReferences(items, evidence)) {
     try {
       const filePath = await objectStorage.getLocalObjectFile(reference.objectPath);
       imageFiles.push({

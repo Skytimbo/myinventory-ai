@@ -7,11 +7,13 @@ import {
   SUPPORTED_BACKUP_SCHEMA_VERSIONS,
   archivePathToFilesystemPath,
   copyFileEnsuringDir,
+  emptyEvidence,
   extractTarGz,
   getImageObjectPaths,
   objectPathToStorageRelativePath,
   readJsonFile,
   sha256Buffer,
+  type BackupEvidence,
   type BackupInventoryItem,
   type BackupManifest,
   type InventoryBackupPayload,
@@ -28,7 +30,7 @@ export async function verifyBackupArchive({
 }: {
   archivePath: string;
   restoreUploadsDir: string;
-}): Promise<{ manifest: BackupManifest; items: BackupInventoryItem[] }> {
+}): Promise<{ manifest: BackupManifest; items: BackupInventoryItem[]; evidence: BackupEvidence }> {
   const extractDir = await fs.mkdtemp(path.join(os.tmpdir(), "myinventory-restore-verify-"));
 
   try {
@@ -51,7 +53,10 @@ export async function verifyBackupArchive({
       notes: item.notes ?? null,
       userAssertions: item.userAssertions ?? null,
     }));
+    // 0002/0003 archives predate capture evidence
+    const evidence = inventoryPayload.evidence ?? emptyEvidence();
     assertCounts(manifest, items);
+    assertEvidenceRelationships(items, evidence, manifest);
 
     const restoredImageHashes = await restoreImages({
       extractDir,
@@ -61,8 +66,9 @@ export async function verifyBackupArchive({
 
     assertImageHashes(manifest, restoredImageHashes);
     assertAnalysisMetadataHashes(items, restoredImageHashes);
+    assertPhotoHashes(evidence, restoredImageHashes);
 
-    return { manifest, items };
+    return { manifest, items, evidence };
   } finally {
     await fs.rm(extractDir, { recursive: true, force: true });
   }
@@ -116,6 +122,43 @@ function assertCounts(manifest: BackupManifest, items: BackupInventoryItem[]): v
   }
 }
 
+/** Every link points at a restored row, and every photo's file is in the archive */
+function assertEvidenceRelationships(
+  items: BackupInventoryItem[],
+  evidence: BackupEvidence,
+  manifest: BackupManifest
+): void {
+  const itemIds = new Set(items.map((item) => item.id));
+  const sessionIds = new Set(evidence.captureSessions.map((session) => session.id));
+  const batchIds = new Set(evidence.captureBatches.map((batch) => batch.id));
+  const photoIds = new Set(evidence.photos.map((photo) => photo.id));
+  const archivedPaths = new Set(manifest.images.map((image) => image.objectPath));
+
+  for (const batch of evidence.captureBatches) {
+    if (!sessionIds.has(batch.sessionId)) {
+      throw new Error(`Capture batch ${batch.id} refers to a missing session ${batch.sessionId}`);
+    }
+  }
+  for (const photo of evidence.photos) {
+    if (photo.batchId && !batchIds.has(photo.batchId)) {
+      throw new Error(`Photo ${photo.id} refers to a missing batch ${photo.batchId}`);
+    }
+    if (!archivedPaths.has(photo.objectPath)) {
+      throw new Error(`Photo ${photo.id} file is not in the archive: ${photo.objectPath}`);
+    }
+  }
+  for (const link of evidence.itemPhotos) {
+    if (!itemIds.has(link.itemId) || !photoIds.has(link.photoId)) {
+      throw new Error(`Item photo link ${link.itemId} → ${link.photoId} refers to a missing item or photo`);
+    }
+  }
+  if (manifest.photoCount !== undefined && manifest.photoCount !== evidence.photos.length) {
+    throw new Error(
+      `Photo count mismatch: manifest=${manifest.photoCount}, inventory=${evidence.photos.length}`
+    );
+  }
+}
+
 async function restoreImages({
   extractDir,
   restoreUploadsDir,
@@ -150,6 +193,18 @@ function assertImageHashes(
       throw new Error(
         `Image hash mismatch for ${image.objectPath}. If this only fails against /objects/* downloads, confirm whether production serves transformed images instead of canonical bytes.`
       );
+    }
+  }
+}
+
+/** Photos are evidence: restored bytes must match what was recorded at capture */
+function assertPhotoHashes(
+  evidence: BackupEvidence,
+  restoredImageHashes: Map<string, string>
+): void {
+  for (const photo of evidence.photos) {
+    if (restoredImageHashes.get(photo.objectPath) !== photo.sha256) {
+      throw new Error(`Photo hash mismatch for ${photo.objectPath} (photo ${photo.id})`);
     }
   }
 }
