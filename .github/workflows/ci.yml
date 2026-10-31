@@ -63,8 +63,18 @@ jobs:
         env:
           PGPASSWORD: postgres
 
+      # Same schema files, in the same order, as scripts/dev-setup.ts
+      - name: Apply schema
+        run: |
+          for f in railway-init 0002_analysis_metadata 0003_identify_valuation 0004_capture_evidence; do
+            psql -v ON_ERROR_STOP=1 -h localhost -U postgres -d test -f "migrations/$f.sql"
+          done
+        env:
+          PGPASSWORD: postgres
+
       - name: Reset and seed test database
         env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test
           DATABASE_URL_TEST: postgresql://postgres:postgres@localhost:5432/test
           NODE_ENV: test
         run: pnpm db:reset && pnpm db:seed
@@ -136,8 +146,18 @@ jobs:
         env:
           PGPASSWORD: postgres
 
+      # Same schema files, in the same order, as scripts/dev-setup.ts
+      - name: Apply schema
+        run: |
+          for f in railway-init 0002_analysis_metadata 0003_identify_valuation 0004_capture_evidence; do
+            psql -v ON_ERROR_STOP=1 -h localhost -U postgres -d test -f "migrations/$f.sql"
+          done
+        env:
+          PGPASSWORD: postgres
+
       - name: Seed DB for E2E
         env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test
           DATABASE_URL_TEST: postgresql://postgres:postgres@localhost:5432/test
           NODE_ENV: test
         run: |
