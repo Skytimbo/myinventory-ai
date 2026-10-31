@@ -22,3 +22,7 @@ graphify-out/
 # Real-photo AI evaluation (local only: personal photos and raw model output)
 ai-eval-photos/
 ai-eval-results/
+
+# Local development (scripts/dev-setup.ts)
+.env.development
+uploads-dev/

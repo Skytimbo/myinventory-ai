@@ -47,6 +47,8 @@ function valuation(overrides: Record<string, unknown> = {}) {
     promptVersion: "valuation-v1",
     staleAt: null,
     staleReason: null,
+    scope: "item",
+    assumptions: ["visible_condition_only"],
     ...overrides,
   };
 }
@@ -136,7 +138,7 @@ test.describe('Identify / Estimate Value display (migration 0003)', () => {
     const card = page.locator('[data-testid="card-item-legacy"]');
     await expect(card.getByTestId("text-value-status-legacy")).toContainText("Value not evaluated");
     await expect(card.getByTestId("text-legacy-value-legacy")).toContainText("Legacy estimate $125.00");
-    await expect(page.getByTestId("stat-total-value")).toHaveText("—");
+    await expect(page.getByTestId("stat-combined-total")).toHaveText("—");
   });
 
   test('never shows a price for nonmarketable or unestablished values', async ({ page }) => {
@@ -183,8 +185,9 @@ test.describe('Identify / Estimate Value display (migration 0003)', () => {
       item("none"),
     ]);
 
-    await expect(page.getByTestId("stat-total-value")).toHaveText("$150.00");
-    await expect(page.getByTestId("stat-total-value-detail")).toContainText("2 of 5 items estimated");
+    await expect(page.getByTestId("stat-item-total")).toHaveText("$150.00");
+    await expect(page.getByTestId("stat-combined-total")).toHaveText("$150.00");
+    await expect(page.getByTestId("stat-combined-total-detail")).toContainText("2 items · item + category estimates");
     await expect(page.locator('[data-testid="card-item-stale"]').getByTestId("text-stale-stale")).toBeVisible();
   });
 });

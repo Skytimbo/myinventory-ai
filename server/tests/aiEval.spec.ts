@@ -205,7 +205,7 @@ describe("runEvaluation", () => {
     expect(run).toMatchObject({
       mode: "openai",
       models: { identifyCheap: "gpt-4o-mini", identifyPremium: "gpt-4o", valuation: "gpt-4o" },
-      promptVersions: { identify: "identify-v3", valuation: "valuation-v3" },
+      promptVersions: { identify: "identify-v3", valuation: "valuation-v4" },
       summary: { items: 1, failures: 0, mismatches: 0, skipped: 0 },
       abortedReason: null,
     });
@@ -219,7 +219,7 @@ describe("runEvaluation", () => {
       error: null,
     });
     expect(item.estimate).toMatchObject({
-      promptVersion: "valuation-v3",
+      promptVersion: "valuation-v4",
       model: "gpt-4o",
       parsed: { status: "nonmarketable", likely: null },
       error: null,
@@ -381,7 +381,7 @@ describe("writeResults", () => {
 });
 
 describe("ai:eval isolation", () => {
-  it("bundles only the analyzer and the OpenAI SDK: no database, storage, dotenv, or migrations", async () => {
+  it("bundles only the analyzer, its vocabulary, and the OpenAI SDK: no database, storage, dotenv, or migrations", async () => {
     const result = await build({
       entryPoints: [path.join(REPO_ROOT, "scripts/ai-eval.ts")],
       absWorkingDir: REPO_ROOT,
@@ -400,7 +400,12 @@ describe("ai:eval isolation", () => {
       )
     );
 
-    expect(inputs).toEqual(["scripts/ai-eval-lib.ts", "scripts/ai-eval.ts", "server/analyzer.ts"]);
+    expect(inputs).toEqual([
+      "scripts/ai-eval-lib.ts",
+      "scripts/ai-eval.ts",
+      "server/analyzer.ts",
+      "shared/valuationVocabulary.ts",
+    ]);
     expect(Array.from(externals).sort()).toEqual(["crypto", "fs", "openai", "path", "url"]);
   });
 

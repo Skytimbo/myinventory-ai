@@ -7,21 +7,25 @@ import {
   BACKUP_FORMAT_VERSION,
   BACKUP_SCHEMA_VERSION,
   PROJECT_NAME,
+  emptyEvidence,
   getImageObjectPaths,
   inventoryItemsToCsv,
   objectPathToArchivePath,
+  type BackupEvidence,
   type BackupImageManifestEntry,
   type BackupInventoryItem,
   type BackupManifest,
   type InventoryBackupPayload,
 } from "../scripts/backup-utils";
 import type { InventoryItem } from "../shared/schema";
+import type { EvidenceSnapshot } from "./storage";
 
 const TAR_BLOCK_SIZE = 512;
 
 export interface BackupImageReference {
   objectPath: string;
   itemIds: Set<string>;
+  photoId?: string;
 }
 
 export interface BackupImageFile {
@@ -77,28 +81,82 @@ export function toBackupInventoryItem(item: InventoryItem): BackupInventoryItem 
     analysisMetadata: item.analysisMetadata ?? null,
     identification: item.identification ?? null,
     valuation: item.valuation ?? null,
+    notes: item.notes ?? null,
+    userAssertions: item.userAssertions ?? null,
     createdAt: item.createdAt,
   };
 }
 
+/** Every evidence column must appear here, or backups silently lose data */
+export function toBackupEvidence(snapshot: EvidenceSnapshot): BackupEvidence {
+  return {
+    captureSessions: snapshot.sessions.map((session) => ({
+      id: session.id,
+      title: session.title,
+      notes: session.notes ?? null,
+      createdAt: session.createdAt,
+    })),
+    captureBatches: snapshot.batches.map((batch) => ({
+      id: batch.id,
+      sessionId: batch.sessionId,
+      context: batch.context ?? {},
+      createdAt: batch.createdAt,
+    })),
+    photos: snapshot.photos.map((photo) => ({
+      id: photo.id,
+      batchId: photo.batchId ?? null,
+      objectPath: photo.objectPath,
+      sha256: photo.sha256,
+      bytes: photo.bytes,
+      mimeType: photo.mimeType,
+      originalFilename: photo.originalFilename ?? null,
+      source: photo.source,
+      createdAt: photo.createdAt,
+    })),
+    itemPhotos: snapshot.itemPhotos.map((link) => ({
+      itemId: link.itemId,
+      photoId: link.photoId,
+      position: link.position,
+      createdAt: link.createdAt,
+    })),
+  };
+}
+
+/**
+ * Every file the archive must contain: images referenced by items, plus every
+ * registered photo, including photos not linked to any item.
+ */
 export function collectImageReferences(
-  items: BackupInventoryItem[]
+  items: BackupInventoryItem[],
+  evidence: BackupEvidence = emptyEvidence()
 ): BackupImageReference[] {
-  const references = new Map<string, Set<string>>();
+  const references = new Map<string, BackupImageReference>();
+  const reference = (objectPath: string) => {
+    let entry = references.get(objectPath);
+    if (!entry) {
+      entry = { objectPath, itemIds: new Set() };
+      references.set(objectPath, entry);
+    }
+    return entry;
+  };
 
   for (const item of items) {
     for (const objectPath of getImageObjectPaths(item)) {
-      if (!references.has(objectPath)) {
-        references.set(objectPath, new Set());
-      }
-      references.get(objectPath)?.add(item.id);
+      reference(objectPath).itemIds.add(item.id);
     }
   }
 
-  return Array.from(references.entries()).map(([objectPath, itemIds]) => ({
-    objectPath,
-    itemIds,
-  }));
+  const photoPaths = new Map<string, string>();
+  for (const photo of evidence.photos) {
+    reference(photo.objectPath).photoId = photo.id;
+    photoPaths.set(photo.id, photo.objectPath);
+  }
+  for (const link of evidence.itemPhotos) {
+    const objectPath = photoPaths.get(link.photoId);
+    if (objectPath) reference(objectPath).itemIds.add(link.itemId);
+  }
+
+  return Array.from(references.values());
 }
 
 export function countDbImageReferences(items: BackupInventoryItem[]): number {
@@ -107,16 +165,19 @@ export function countDbImageReferences(items: BackupInventoryItem[]): number {
 
 export async function createBackupArchivePlan({
   items,
+  evidence = emptyEvidence(),
   imageFiles,
   sourceAppUrl,
   createdAt = new Date().toISOString(),
 }: {
   items: BackupInventoryItem[];
+  evidence?: BackupEvidence;
   imageFiles: BackupImageFile[];
   sourceAppUrl: string;
   createdAt?: string;
 }): Promise<BackupArchivePlan> {
-  const imageReferences = collectImageReferences(items);
+  const imageReferences = collectImageReferences(items, evidence);
+  const photosById = new Map(evidence.photos.map((photo) => [photo.id, photo]));
   const imageFileByObjectPath = new Map(
     imageFiles.map((image) => [image.objectPath, image])
   );
@@ -136,12 +197,20 @@ export async function createBackupArchivePlan({
       }
 
       const hash = await hashFile(image.filePath);
+      const photo = reference.photoId ? photosById.get(reference.photoId) : undefined;
+      // Photos are evidence: their bytes must still be what was recorded at capture
+      if (photo && (photo.sha256 !== hash.sha256 || photo.bytes !== hash.bytes)) {
+        throw new BackupIntegrityError(
+          `Photo file no longer matches its recorded hash: ${reference.objectPath}`
+        );
+      }
       return {
         objectPath: reference.objectPath,
         archivePath: objectPathToArchivePath(reference.objectPath),
         sha256: hash.sha256,
         bytes: hash.bytes,
         itemIds: Array.from(reference.itemIds).sort(),
+        ...(reference.photoId ? { photoId: reference.photoId } : {}),
         filePath: image.filePath,
       };
     })
@@ -152,7 +221,9 @@ export async function createBackupArchivePlan({
     schemaVersion: BACKUP_SCHEMA_VERSION,
     exportedAt: createdAt,
     items,
+    evidence,
   };
+  const linkedPhotoIds = new Set(evidence.itemPhotos.map((link) => link.photoId));
 
   const manifest: BackupManifest = {
     backupFormatVersion: BACKUP_FORMAT_VERSION,
@@ -164,11 +235,13 @@ export async function createBackupArchivePlan({
     dbImageReferenceCount: countDbImageReferences(items),
     uniqueImageReferenceCount: imageReferences.length,
     downloadedImageCount: manifestImages.length,
+    photoCount: evidence.photos.length,
+    unassignedPhotoCount: evidence.photos.filter((photo) => !linkedPhotoIds.has(photo.id)).length,
     missingImageReferences: [],
     orphanFileAudit: {
       status: "not_checked",
       reason:
-        "Backup includes every image referenced by database rows. It does not list the full uploads volume, so unreferenced volume files are outside this audit.",
+        "Backup includes every image referenced by item rows and every registered photo, including photos not linked to an item. It does not list the full uploads volume, so files no database row refers to are outside this audit.",
     },
     images: manifestImages.map(({ filePath: _filePath, ...image }) => image),
   };

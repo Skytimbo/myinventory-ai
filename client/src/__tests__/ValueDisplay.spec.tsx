@@ -63,6 +63,8 @@ function createItem(overrides: Partial<InventoryItem> = {}): InventoryItem {
     analysisMetadata: { model: 'gpt-4o-mini' },
     identification: IDENTIFICATION,
     valuation: null,
+    notes: null,
+    userAssertions: null,
     createdAt: '2026-10-01T00:00:00.000Z',
     ...overrides,
   };
@@ -109,6 +111,8 @@ describe('ItemCard value states', () => {
   it('marks a stale estimate and says it is not counted', () => {
     const item = createItem({
       valuation: createValuation({ staleAt: '2026-10-22T00:00:00.000Z', staleReason: 'reidentified' }),
+      notes: null,
+      userAssertions: null,
     });
     const card = renderCard(item);
 
@@ -206,6 +210,8 @@ describe('ItemCard value states', () => {
         alternatives: ['Butter churn base'],
       },
       valuation: createValuation(),
+      notes: null,
+      userAssertions: null,
     });
     const card = renderCard(item);
 
@@ -281,31 +287,94 @@ describe('ItemCard AI actions', () => {
   });
 });
 
-describe('Dashboard totals', () => {
-  it('totals only current estimates and lists what is excluded', () => {
+describe('Dashboard totals (valuation-v4)', () => {
+  const itemValuation = (likely: string, extra: Partial<Valuation> = {}) =>
+    createValuation({ likely, scope: 'item', assumptions: ['visible_condition_only'], ...extra });
+  const categoryValuation = (likely: string) =>
+    createValuation({ likely, scope: 'category', confidence: 'low', assumptions: ['unattributed', 'visible_condition_only'] });
+
+  it('totals item estimates and category baselines separately, and combines only those', () => {
     render(
       <Dashboard
         items={[
-          createItem({ valuation: createValuation({ likely: '55.00' }) }),
-          createItem({ valuation: createValuation({ likely: '20.00' }) }),
-          createItem({ valuation: createValuation({ likely: '900.00', staleAt: '2026-10-22T00:00:00.000Z' }) }),
+          createItem({ valuation: itemValuation('55.00') }),
+          createItem({ valuation: itemValuation('20.00') }),
+          createItem({ valuation: categoryValuation('6.00') }),
+          createItem({ valuation: createValuation({ likely: '40.00' }) }), // basis not recorded
+          createItem({ valuation: itemValuation('900.00', { staleAt: '2026-10-22T00:00:00.000Z' }) }),
           createItem({ estimatedValue: '300.00', valueConfidence: 'high' }),
           createItem(),
         ]}
       />
     );
 
-    expect(screen.getByTestId('stat-total-value')).toHaveTextContent('$75.00');
-    expect(screen.getByTestId('stat-total-value-detail')).toHaveTextContent(
-      '2 of 5 items estimated · 1 stale, 1 legacy not counted'
+    expect(screen.getByTestId('stat-item-total')).toHaveTextContent('$75.00');
+    expect(screen.getByTestId('stat-item-total-detail')).toHaveTextContent('2 items');
+    expect(screen.getByTestId('stat-category-total')).toHaveTextContent('$6.00');
+    expect(screen.getByTestId('stat-category-total-detail')).toHaveTextContent('1 item · typical unattributed');
+    expect(screen.getByTestId('stat-combined-total')).toHaveTextContent('$81.00');
+    expect(screen.getByTestId('stat-combined-total-detail')).toHaveTextContent(
+      '3 items · item + category estimates · 1 with basis not recorded, 1 stale, 1 legacy not counted'
     );
-    expect(screen.getByTestId('stat-avg-value')).toHaveTextContent('$37.50');
   });
 
-  it('shows a dash instead of $0.00 when nothing has a current estimate', () => {
-    render(<Dashboard items={[createItem(), createItem({ estimatedValue: '0.00' })]} />);
+  it('shows dashes instead of $0.00 when nothing qualifies, including unrecorded-basis estimates', () => {
+    render(
+      <Dashboard
+        items={[
+          createItem(),
+          createItem({ estimatedValue: '0.00' }),
+          createItem({ valuation: createValuation({ likely: '40.00' }) }),
+        ]}
+      />
+    );
 
-    expect(screen.getByTestId('stat-total-value')).toHaveTextContent('—');
-    expect(screen.getByTestId('stat-avg-value')).toHaveTextContent('—');
+    expect(screen.getByTestId('stat-item-total')).toHaveTextContent('—');
+    expect(screen.getByTestId('stat-category-total')).toHaveTextContent('—');
+    expect(screen.getByTestId('stat-combined-total')).toHaveTextContent('—');
+    expect(screen.getByTestId('stat-combined-total-detail')).toHaveTextContent('1 with basis not recorded');
   });
 });
+
+describe('ItemCard valuation scope (valuation-v4)', () => {
+  it('labels an item estimate and explains untested functionality', () => {
+    const item = createItem({
+      valuation: createValuation({ scope: 'item', confidence: 'low', assumptions: ['as_is_untested', 'visible_condition_only'] }),
+      notes: null,
+      userAssertions: null,
+    });
+    const card = renderCard(item);
+
+    expect(card.getByTestId(`badge-scope-${item.id}`)).toHaveTextContent('Item estimate');
+    expect(card.getByTestId(`list-assumptions-${item.id}`)).toHaveTextContent(
+      'Assumes: Functionality untested (unknown, not known to be faulty)'
+    );
+    expect(card.getByTestId(`list-assumptions-${item.id}`)).not.toHaveTextContent('photos only');
+    expect(card.getByTestId(`text-indicative-note-${item.id}`)).toHaveTextContent('Not an appraisal');
+  });
+
+  it('labels a category baseline as a typical unattributed item', () => {
+    const item = createItem({
+      name: 'Ceramic Mug',
+      valuation: createValuation({ scope: 'category', confidence: 'low', assumptions: ['unattributed', 'visible_condition_only'] }),
+      notes: null,
+      userAssertions: null,
+    });
+    const card = renderCard(item);
+
+    expect(card.getByTestId(`badge-scope-${item.id}`)).toHaveTextContent('Category baseline');
+    expect(card.getByTestId(`text-category-baseline-${item.id}`)).toHaveTextContent('Typical used ceramic mug, maker unknown');
+    expect(card.getByTestId(`list-assumptions-${item.id}`)).toHaveTextContent('excludes any maker, collectible, authenticity, or provenance premium');
+  });
+
+  it('labels an earlier estimate as basis not recorded without reclassifying it', () => {
+    const item = createItem({ valuation: createValuation() });
+    const card = renderCard(item);
+
+    expect(card.getByTestId(`badge-scope-${item.id}`)).toHaveTextContent('Basis not recorded');
+    expect(card.queryByTestId(`text-category-baseline-${item.id}`)).toBeNull();
+    expect(card.queryByTestId(`list-assumptions-${item.id}`)).toBeNull();
+    expect(card.getByTestId(`text-indicative-note-${item.id}`)).toBeInTheDocument();
+  });
+});
+

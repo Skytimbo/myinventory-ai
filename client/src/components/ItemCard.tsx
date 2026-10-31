@@ -3,7 +3,7 @@ import { InventoryItem } from "@shared/schema";
 import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Trash2, Maximize2, ImageIcon, MapPin, Images, Sparkles, Loader2, CircleDollarSign } from "lucide-react";
+import { Trash2, Maximize2, ImageIcon, MapPin, Images, Sparkles, Loader2, CircleDollarSign, Pencil, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   AlertDialog,
@@ -16,6 +16,9 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { getIdentificationStatus } from "@shared/valuation";
+import { ItemEditDialog } from "@/components/ItemEditDialog";
+import { apiRequest } from "@/lib/queryClient";
+import { invalidateCaptureQueries } from "@/lib/captureQueries";
 import { ValueSummary } from "@/components/ValueSummary";
 import JsBarcode from "jsbarcode";
 
@@ -50,6 +53,23 @@ export function ItemCard({
   // Description expansion state
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const [confirmReidentify, setConfirmReidentify] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+
+  // AI-provided details the user has not yet confirmed (one click confirms them as shown)
+  const unconfirmedAiFields = item.identification
+    ? (["name", "description", "category", "tags"] as const).filter((field) => !item.userAssertions?.[field])
+    : [];
+  const nameConfirmed = item.userAssertions?.name?.source === "user";
+  const confirmAsShown = async () => {
+    setConfirming(true);
+    try {
+      await apiRequest("PATCH", `/api/items/${item.id}`, { confirm: unconfirmedAiFields });
+      await invalidateCaptureQueries();
+    } finally {
+      setConfirming(false);
+    }
+  };
 
   const identificationStatus = getIdentificationStatus(item);
   const isUnidentified = identificationStatus === "unidentified";
@@ -183,9 +203,28 @@ export function ItemCard({
       </div>
       <CardContent className="p-4 space-y-3">
         <div>
-          <h3 className="text-lg font-medium text-foreground mb-1 line-clamp-1" data-testid={`text-name-${item.id}`}>
-            {item.name}
-          </h3>
+          <div className="flex items-start justify-between gap-2">
+            <h3 className="text-lg font-medium text-foreground mb-1 line-clamp-1" data-testid={`text-name-${item.id}`}>
+              {item.name}
+              {nameConfirmed && (
+                <CheckCircle2
+                  className="inline w-4 h-4 ml-1 text-green-600 align-text-bottom"
+                  aria-label="Confirmed by you"
+                  data-testid={`icon-confirmed-${item.id}`}
+                />
+              )}
+            </h3>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 shrink-0"
+              onClick={() => setEditing(true)}
+              aria-label="Edit item"
+              data-testid={`button-edit-${item.id}`}
+            >
+              <Pencil className="w-4 h-4" />
+            </Button>
+          </div>
           <p
             ref={descriptionRef}
             className={cn(
@@ -255,6 +294,20 @@ export function ItemCard({
         </div>
       </CardContent>
       <CardFooter className="p-4 pt-0 flex flex-wrap gap-2">
+        {unconfirmedAiFields.length > 0 && (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={confirmAsShown}
+            disabled={confirming}
+            className="w-full"
+            title="Keep the AI's name, description, category, and tags as your own"
+            data-testid={`button-confirm-${item.id}`}
+          >
+            {confirming ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <CheckCircle2 className="w-4 h-4 mr-1" />}
+            Looks right — confirm
+          </Button>
+        )}
         {onIdentify && (
           <Button
             variant={isUnidentified ? "default" : "outline"}
@@ -302,12 +355,14 @@ export function ItemCard({
         </Button>
       </CardFooter>
 
+      <ItemEditDialog item={item} open={editing} onOpenChange={setEditing} />
+
       <AlertDialog open={confirmReidentify} onOpenChange={setConfirmReidentify}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Re-identify this item?</AlertDialogTitle>
             <AlertDialogDescription>
-              The AI will replace the current name, description, category, and tags.
+              The AI will update details you haven't entered or confirmed. Your own details are kept, and any different AI suggestions appear under Edit.
               {item.valuation && !item.valuation.staleAt &&
                 " The current value estimate will be kept but marked stale until you re-estimate."}
             </AlertDialogDescription>

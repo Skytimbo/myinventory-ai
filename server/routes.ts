@@ -15,18 +15,22 @@ import { createServer, type Server } from "http";
 import { timingSafeEqual } from "crypto";
 import type { AppServices } from "./services";
 import multer from "multer";
+import { z } from "zod";
+import { InvalidPhotoError, SessionNotFoundError } from "./photoService";
 import { wrap, ApiError } from "./errors";
 import { validateUploadedFile } from "./fileValidation";
 import { openAIHealthCheck } from "./analyzer";
 import { getOpenAIEnvHealth } from "./health/openaiHealth";
 import {
+  BackupIntegrityError,
   collectImageReferences,
   createBackupArchivePlan,
+  toBackupEvidence,
   toBackupInventoryItem,
   writeBackupArchive,
   type BackupImageFile,
 } from "./backupArchive";
-import type { BackupInventoryItem } from "../scripts/backup-utils";
+import type { BackupEvidence, BackupInventoryItem } from "../scripts/backup-utils";
 
 declare module "express-session" {
   interface SessionData {
@@ -39,11 +43,55 @@ const upload = multer({
   limits: { fileSize: 10485760 }, // 10MB limit
 });
 
+/** Batch capture: up to 25 photos per request (clients send larger selections in chunks) */
+export const MAX_BATCH_PHOTOS = 25;
+const batchUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10485760, files: MAX_BATCH_PHOTOS },
+});
+
+const createSessionBody = z.object({
+  title: z.string().max(120).optional(),
+  notes: z.string().max(2000).nullable().optional(),
+});
+
+const ASSERTABLE = ["name", "description", "category", "tags", "location", "notes"] as const;
+const optionalText = (max: number) =>
+  z.string().trim().max(max).nullable().transform((value) => (value ? value : null));
+
+const editItemBody = z
+  .object({
+    fields: z
+      .object({
+        name: z.string().trim().min(1).max(120),
+        description: z.string().trim().max(2000),
+        category: z.string().trim().min(1).max(60),
+        tags: z
+          .array(z.string().trim().toLowerCase().min(1).max(40))
+          .max(20)
+          .transform((tags) => Array.from(new Set(tags))),
+        location: optionalText(200),
+        notes: optionalText(4000),
+      })
+      .partial()
+      .strict()
+      .optional(),
+    confirm: z.array(z.enum(ASSERTABLE)).max(ASSERTABLE.length).optional(),
+    acceptSuggestions: z.array(z.enum(["name", "description", "category", "tags"])).max(4).optional(),
+  })
+  .strict();
+
+const createFromPhotosBody = z.object({
+  photoIds: z.array(z.string().uuid()).min(1).max(10),
+  name: z.string().max(120).optional(),
+  identify: z.boolean().optional(),
+});
+
 export async function registerRoutes(
   app: Express,
   services: AppServices
 ): Promise<Server> {
-  const { itemService, objectStorage } = services;
+  const { itemService, objectStorage, photoService, storage } = services;
   const auth = createAuthMiddleware();
   const loginRateLimit = createRateLimiter({
     windowMs: 15 * 60 * 1000,
@@ -146,13 +194,20 @@ export async function registerRoutes(
     backupRateLimit,
     wrap(async (req, res) => {
       const items = (await itemService.getItems()).map(toBackupInventoryItem);
-      const imageFiles = await resolveLocalBackupImageFiles(items, objectStorage);
+      const evidence = toBackupEvidence(await storage.getEvidenceSnapshot());
+      const imageFiles = await resolveLocalBackupImageFiles(items, evidence, objectStorage);
       const createdAt = new Date().toISOString();
       const plan = await createBackupArchivePlan({
         items,
+        evidence,
         imageFiles,
         sourceAppUrl: getRequestAppUrl(req),
         createdAt,
+      }).catch((error: unknown) => {
+        if (error instanceof BackupIntegrityError) {
+          throw new ApiError(500, "BACKUP_INTEGRITY", error.message);
+        }
+        throw error;
       });
 
       res.set({
@@ -278,6 +333,116 @@ export async function registerRoutes(
     }
   });
   app.post("/api/items/:id/identify", aiRateLimit, identifyHandler);
+
+  // ============================================================
+  // Capture evidence (Milestone 1)
+  // ============================================================
+
+  // POST /api/photos/register-existing - record photos that existing items
+  // reference as evidence, in place (no files moved). Idempotent.
+  app.post(
+    "/api/photos/register-existing",
+    wrap(async (_req, res) => {
+      res.json(await photoService.registerExistingItemPhotos());
+    })
+  );
+
+  // GET /api/capture-sessions - sessions with batch and photo counts
+  app.get(
+    "/api/capture-sessions",
+    wrap(async (_req, res) => {
+      res.json(await photoService.listSessions());
+    })
+  );
+
+  // POST /api/capture-sessions - start a capture session
+  app.post(
+    "/api/capture-sessions",
+    wrap(async (req, res) => {
+      const body = createSessionBody.safeParse(req.body ?? {});
+      if (!body.success) {
+        throw new ApiError(400, "INVALID_SESSION", "Invalid capture session");
+      }
+      res.status(201).json(await photoService.createSession(body.data));
+    })
+  );
+
+  // POST /api/capture-sessions/:id/batches - upload photos (field "photos") with
+  // optional context fields location, category, container, purpose. No AI runs.
+  app.post(
+    "/api/capture-sessions/:id/batches",
+    batchUpload.array("photos", MAX_BATCH_PHOTOS),
+    wrap(async (req, res) => {
+      const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+      if (files.length === 0) {
+        throw new ApiError(400, "NO_PHOTOS", 'No photos provided. Use the "photos" field.');
+      }
+      const field = (name: string) => (typeof req.body?.[name] === "string" ? req.body[name] : undefined);
+      try {
+        const result = await photoService.addBatch(
+          req.params.id,
+          files.map((file) => ({ buffer: file.buffer, originalFilename: file.originalname })),
+          { location: field("location"), category: field("category"), container: field("container"), purpose: field("purpose") }
+        );
+        res.status(201).json(result);
+      } catch (err) {
+        if (err instanceof SessionNotFoundError) throw new ApiError(404, "NOT_FOUND", err.message);
+        if (err instanceof InvalidPhotoError) throw new ApiError(400, "INVALID_FILE_TYPE", err.message);
+        throw err;
+      }
+    })
+  );
+
+  // GET /api/photos?unassigned=true - photo evidence with context and links
+  app.get(
+    "/api/photos",
+    wrap(async (req, res) => {
+      res.json(await photoService.listPhotos({ unassigned: req.query.unassigned === "true" }));
+    })
+  );
+
+  // PATCH /api/items/:id - user edits and one-click confirmations
+  app.patch(
+    "/api/items/:id",
+    wrap(async (req, res) => {
+      const body = editItemBody.safeParse(req.body ?? {});
+      if (!body.success) {
+        throw new ApiError(400, "INVALID_EDIT", body.error.issues[0]?.message ?? "Invalid edit");
+      }
+      try {
+        res.json(await itemService.editItem(req.params.id, body.data));
+      } catch (err) {
+        if (err instanceof Error && err.message === "Item not found") {
+          throw new ApiError(404, "NOT_FOUND", "Item not found");
+        }
+        if (err instanceof Error && err.message.startsWith("No suggestion for")) {
+          throw new ApiError(409, "NO_SUGGESTION", err.message);
+        }
+        throw err;
+      }
+    })
+  );
+
+  // POST /api/items/from-photos - create an inventory entry from captured photos
+  app.post(
+    "/api/items/from-photos",
+    aiRateLimit,
+    wrap(async (req, res) => {
+      const body = createFromPhotosBody.safeParse(req.body ?? {});
+      if (!body.success) {
+        throw new ApiError(400, "INVALID_REQUEST", "Select 1 to 10 photos");
+      }
+      try {
+        const result = await itemService.createItemFromPhotos(body.data);
+        res.status(201).json({ ...result.item, _aiWarning: result.aiWarning });
+      } catch (err) {
+        if (err instanceof Error && err.message === "Photo not found") {
+          throw new ApiError(404, "NOT_FOUND", "Photo not found");
+        }
+        throw err;
+      }
+    })
+  );
   app.post("/api/items/:id/analyze", aiRateLimit, identifyHandler);
   app.post("/api/items/:id/reanalyze", aiRateLimit, identifyHandler);
 
@@ -328,6 +493,12 @@ export async function registerRoutes(
         return res.status(413).json({
           error: "File too large. Maximum size is 10MB.",
           code: "FILE_TOO_LARGE",
+        });
+      }
+      if (error.code === "LIMIT_FILE_COUNT" || error.code === "LIMIT_UNEXPECTED_FILE") {
+        return res.status(400).json({
+          error: `Too many photos in one upload. Send at most ${MAX_BATCH_PHOTOS} at a time.`,
+          code: "TOO_MANY_PHOTOS",
         });
       }
     }
@@ -468,12 +639,13 @@ function normalizeFiles(
 
 async function resolveLocalBackupImageFiles(
   items: BackupInventoryItem[],
+  evidence: BackupEvidence,
   objectStorage: AppServices["objectStorage"]
 ): Promise<BackupImageFile[]> {
   const imageFiles: BackupImageFile[] = [];
   const missingImageReferences: string[] = [];
 
-  for (const reference of collectImageReferences(items)) {
+  for (const reference of collectImageReferences(items, evidence)) {
     try {
       const filePath = await objectStorage.getLocalObjectFile(reference.objectPath);
       imageFiles.push({

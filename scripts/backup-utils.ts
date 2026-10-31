@@ -2,14 +2,23 @@ import { spawn } from "child_process";
 import { createHash } from "crypto";
 import { promises as fs } from "fs";
 import path from "path";
-import type { Identification, Valuation } from "../shared/schema";
+import type {
+  CaptureBatch,
+  CaptureSession,
+  Identification,
+  ItemPhoto,
+  Photo,
+  UserAssertions,
+  Valuation,
+} from "../shared/schema";
 import { VALUATION_CSV_HEADERS, valuationCsvCells } from "../shared/valuation";
 
 export const BACKUP_FORMAT_VERSION = 1;
-export const BACKUP_SCHEMA_VERSION = "0003_identify_valuation";
+export const BACKUP_SCHEMA_VERSION = "0004_capture_evidence";
 /** Archive schema versions restore verification accepts. Older ones lack newer columns. */
 export const SUPPORTED_BACKUP_SCHEMA_VERSIONS: readonly string[] = [
   "0002_analysis_metadata",
+  "0003_identify_valuation",
   BACKUP_SCHEMA_VERSION,
 ];
 export const PROJECT_NAME = "myinventory-ai";
@@ -41,7 +50,19 @@ export interface BackupInventoryItem {
   identification: Identification | null;
   /** Absent in 0002 archives */
   valuation: Valuation | null;
+  /** Absent in 0002/0003 archives */
+  notes: string | null;
+  /** Absent in 0002/0003 archives */
+  userAssertions: UserAssertions | null;
   createdAt: string;
+}
+
+/** Capture evidence rows, verbatim (0004+). Photos may be linked to no item. */
+export interface BackupEvidence {
+  captureSessions: CaptureSession[];
+  captureBatches: CaptureBatch[];
+  photos: Photo[];
+  itemPhotos: ItemPhoto[];
 }
 
 export interface InventoryBackupPayload {
@@ -49,6 +70,12 @@ export interface InventoryBackupPayload {
   schemaVersion: string;
   exportedAt: string;
   items: BackupInventoryItem[];
+  /** Absent in 0002/0003 archives */
+  evidence?: BackupEvidence;
+}
+
+export function emptyEvidence(): BackupEvidence {
+  return { captureSessions: [], captureBatches: [], photos: [], itemPhotos: [] };
 }
 
 export interface BackupImageManifestEntry {
@@ -57,6 +84,8 @@ export interface BackupImageManifestEntry {
   sha256: string;
   bytes: number;
   itemIds: string[];
+  /** The photos row stored at this path (0004+); absent for item-only references */
+  photoId?: string;
 }
 
 export interface BackupManifest {
@@ -69,6 +98,9 @@ export interface BackupManifest {
   dbImageReferenceCount: number;
   uniqueImageReferenceCount: number;
   downloadedImageCount: number;
+  /** 0004+: every photos row, including photos not linked to any item */
+  photoCount?: number;
+  unassignedPhotoCount?: number;
   missingImageReferences: string[];
   orphanFileAudit: {
     status: "not_checked";
@@ -144,6 +176,9 @@ export function inventoryItemsToCsv(items: BackupInventoryItem[]): string {
     "Description",
     "Category",
     "Tags",
+    "Location",
+    "Notes",
+    "Confirmed By You",
     ...VALUATION_CSV_HEADERS,
     "Barcode",
     "Created At",
@@ -153,6 +188,12 @@ export function inventoryItemsToCsv(items: BackupInventoryItem[]): string {
     item.description,
     item.category,
     item.tags.join("; "),
+    item.location ?? "",
+    item.notes ?? "",
+    Object.entries(item.userAssertions ?? {})
+      .filter(([, assertion]) => assertion?.source === "user")
+      .map(([field]) => field)
+      .join("; "),
     ...valuationCsvCells(item),
     item.barcodeData,
     item.createdAt,

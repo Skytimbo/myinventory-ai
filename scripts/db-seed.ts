@@ -1,6 +1,6 @@
 /* scripts/db-seed.ts */
 import 'dotenv/config';
-import { getPgPoolFromUrl } from './_db';
+import { connectLocalDatabase, exitWithSafeError } from './_localDb';
 import { randomUUID } from 'crypto';
 
 const url = process.env.DATABASE_URL_TEST || process.env.DATABASE_URL;
@@ -19,8 +19,7 @@ const items = [
 ];
 
 async function main() {
-  const pool = getPgPoolFromUrl(url);
-  const client = await pool.connect();
+  const { pool, client } = await connectLocalDatabase(url, 'seed the database');
   try {
     console.log('🌱 Seeding database...');
     await client.query('BEGIN');
@@ -76,7 +75,4 @@ async function main() {
   }
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+main().catch(exitWithSafeError);

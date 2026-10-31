@@ -10,6 +10,7 @@ import {
   normalizeAppUrl,
   objectPathToArchivePath,
   requireEnv,
+  type BackupEvidence,
   type BackupInventoryItem,
 } from "./backup-utils";
 import {
@@ -32,10 +33,10 @@ async function main() {
     await fs.mkdir(backupDir, { recursive: true });
 
     console.log("Reading inventory records...");
-    const items = await loadInventoryItems(databaseUrl);
-    const imageReferences = collectImageReferences(items);
+    const { items, evidence } = await loadInventory(databaseUrl);
+    const imageReferences = collectImageReferences(items, evidence);
     console.log(
-      `Found ${items.length} item(s) and ${imageReferences.length} unique image reference(s).`
+      `Found ${items.length} item(s), ${evidence.photos.length} photo(s), and ${imageReferences.length} unique image file(s).`
     );
 
     const cookie = await login(appUrl, inventoryPassword);
@@ -48,6 +49,7 @@ async function main() {
 
     const plan = await createBackupArchivePlan({
       items,
+      evidence,
       imageFiles,
       sourceAppUrl: appUrl,
       createdAt,
@@ -63,11 +65,15 @@ async function main() {
   }
 }
 
-async function loadInventoryItems(databaseUrl: string): Promise<BackupInventoryItem[]> {
+async function loadInventory(
+  databaseUrl: string
+): Promise<{ items: BackupInventoryItem[]; evidence: BackupEvidence }> {
   const pool = getPgPoolFromUrl(databaseUrl);
   const client = await pool.connect();
 
   try {
+    // One snapshot, so items and photo links agree
+    await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
     const result = await client.query<BackupInventoryItem>(`
       SELECT
         id::text AS "id",
@@ -85,12 +91,17 @@ async function loadInventoryItems(databaseUrl: string): Promise<BackupInventoryI
         analysis_metadata AS "analysisMetadata",
         identification,
         valuation,
+        notes,
+        user_assertions AS "userAssertions",
         created_at AS "createdAt"
       FROM inventory_items
       ORDER BY created_at DESC, name ASC
     `);
 
-    return result.rows.map((item) => ({
+    const evidence = await loadEvidence(client);
+    await client.query("COMMIT");
+
+    const items = result.rows.map((item) => ({
       ...item,
       tags: Array.isArray(item.tags) ? item.tags : [],
       imageUrls: Array.isArray(item.imageUrls) ? item.imageUrls : null,
@@ -101,11 +112,55 @@ async function loadInventoryItems(databaseUrl: string): Promise<BackupInventoryI
       analysisMetadata: item.analysisMetadata ?? null,
       identification: item.identification ?? null,
       valuation: item.valuation ?? null,
+      notes: item.notes ?? null,
+      userAssertions: item.userAssertions ?? null,
     }));
+    return { items, evidence };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
   } finally {
     client.release();
     await pool.end();
   }
+}
+
+/** Requires migration 0004 */
+async function loadEvidence(client: {
+  query<T>(sql: string): Promise<{ rows: T[] }>;
+}): Promise<BackupEvidence> {
+  const captureSessions = await client.query<BackupEvidence["captureSessions"][number]>(`
+    SELECT id::text AS "id", title, notes, created_at AS "createdAt"
+    FROM capture_sessions ORDER BY created_at, id
+  `);
+  const captureBatches = await client.query<BackupEvidence["captureBatches"][number]>(`
+    SELECT id::text AS "id", session_id::text AS "sessionId", context, created_at AS "createdAt"
+    FROM capture_batches ORDER BY created_at, id
+  `);
+  const photos = await client.query<BackupEvidence["photos"][number]>(`
+    SELECT
+      id::text AS "id",
+      batch_id::text AS "batchId",
+      object_path AS "objectPath",
+      sha256,
+      bytes,
+      mime_type AS "mimeType",
+      original_filename AS "originalFilename",
+      source,
+      created_at AS "createdAt"
+    FROM photos ORDER BY created_at, id
+  `);
+  const itemPhotos = await client.query<BackupEvidence["itemPhotos"][number]>(`
+    SELECT item_id::text AS "itemId", photo_id::text AS "photoId", position, created_at AS "createdAt"
+    FROM item_photos ORDER BY item_id, position
+  `);
+
+  return {
+    captureSessions: captureSessions.rows,
+    captureBatches: captureBatches.rows,
+    photos: photos.rows,
+    itemPhotos: itemPhotos.rows,
+  };
 }
 
 async function login(appUrl: string, password: string): Promise<string> {
