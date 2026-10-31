@@ -76,6 +76,9 @@ jobs:
         env:
           DATABASE_URL_TEST: postgresql://postgres:postgres@localhost:5432/test
           NODE_ENV: test
+          # Non-secret placeholders, as in .env.development.example
+          ANALYZER_PROVIDER: mock
+          OPENAI_API_KEY: mock-analyzer-no-key-required
         run: pnpm test:server
 
   test-client:
@@ -153,6 +156,9 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test
           DATABASE_URL_TEST: postgresql://postgres:postgres@localhost:5432/test
           CI: true
+          # Non-secret placeholders, as in .env.development.example
+          ANALYZER_PROVIDER: mock
+          OPENAI_API_KEY: mock-analyzer-no-key-required
         run: pnpm e2e
 
       - name: Upload Playwright HTML report
