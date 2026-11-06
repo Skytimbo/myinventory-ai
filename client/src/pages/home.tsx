@@ -8,8 +8,10 @@ import { ItemCard } from "@/components/ItemCard";
 import { SearchFilter } from "@/components/SearchFilter";
 import { BarcodeModal } from "@/components/BarcodeModal";
 import { ExportModal } from "@/components/ExportModal";
+import { BatchCaptureDialog } from "@/components/BatchCaptureDialog";
+import { PhotoTray } from "@/components/PhotoTray";
 import { Button } from "@/components/ui/button";
-import { Upload, Download, Loader2, Camera, Package, Zap, LogOut, Archive } from "lucide-react";
+import { Upload, Download, Loader2, Camera, Package, Zap, LogOut, Archive, Images } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -19,6 +21,7 @@ export default function Home() {
   const [showCapture, setShowCapture] = useState(false);
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [showExportModal, setShowExportModal] = useState(false);
+  const [showBatchCapture, setShowBatchCapture] = useState(false);
   const [isBackupDownloading, setIsBackupDownloading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [quickCapture, setQuickCapture] = useState(() => {
@@ -406,6 +409,14 @@ export default function Home() {
               <Upload className="w-4 h-4 mr-2" />
               Upload Image
             </Button>
+            <Button
+              onClick={() => setShowBatchCapture(true)}
+              variant="outline"
+              data-testid="button-batch-capture"
+            >
+              <Images className="w-4 h-4 sm:mr-2" />
+              <span className="hidden sm:inline">Batch capture</span>
+            </Button>
             <Button onClick={() => setShowCapture(true)} data-testid="button-add-item">
               <Camera className="w-4 h-4 mr-2" />
               Add Item
@@ -425,6 +436,8 @@ export default function Home() {
 
       <main className="container mx-auto px-4 py-8 space-y-8">
         <Dashboard items={items} />
+
+        <PhotoTray />
 
         <div className="space-y-4">
           <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
@@ -535,6 +548,8 @@ export default function Home() {
         isOpen={!!selectedItem}
         onClose={() => setSelectedItem(null)}
       />
+
+      <BatchCaptureDialog open={showBatchCapture} onOpenChange={setShowBatchCapture} />
 
       <ExportModal
         items={filteredItems}

@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { getPgPoolFromUrl } from './_db';
+import { connectLocalDatabase, exitWithSafeError } from './_localDb';
 import fs from "fs";
 import path from "path";
 
@@ -9,9 +9,10 @@ if (!url) {
   process.exit(1);
 }
 
+// Local databases only (fail-closed). Production schema changes use the
+// reviewed Neon SQL Editor procedure in docs/AI-IDENTIFY-VALUATION.md.
 async function main() {
-  const pool = getPgPoolFromUrl(url);
-  const client = await pool.connect();
+  const { pool, client } = await connectLocalDatabase(url, 'run a migration');
 
   const migrationArg = process.argv[2] ?? "migrations/0001_uuid_default.sql";
   const migrationPath = path.isAbsolute(migrationArg)
@@ -37,7 +38,4 @@ async function main() {
   }
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+main().catch(exitWithSafeError);

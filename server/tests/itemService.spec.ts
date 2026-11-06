@@ -74,24 +74,38 @@ describe("ItemService", () => {
       expect(result.aiWarning).toBe("Quick capture - not yet identified");
     });
 
-    it("should save image to object storage", async () => {
+    it("should store the upload as photo evidence keyed by photo id and link it", async () => {
       const file = makeFile();
-      await service.createItem({ files: [file] });
+      const { item } = await service.createItem({ files: [file] });
 
-      // Should have saved exactly one file
-      const items = await storage.getItems();
-      const imageUrl = items[0].imageUrl;
-      expect(imageUrl).toMatch(/^\/objects\/items\/.+\.jpg$/);
+      const snapshot = await storage.getEvidenceSnapshot();
+      expect(snapshot.photos).toHaveLength(1);
+      const [photo] = snapshot.photos;
+      expect(item.imageUrl).toBe(photo.objectPath);
+      expect(photo.objectPath).toMatch(new RegExp(`^/objects/photos/${photo.id}\\.jpg$`));
+      expect(photo).toMatchObject({
+        source: "item_upload",
+        batchId: null,
+        bytes: file.buffer.length,
+        mimeType: "image/jpeg",
+        originalFilename: "test.jpg",
+      });
+      expect(await objectStorage.read(photo.objectPath)).toEqual(file.buffer);
+      expect(snapshot.itemPhotos).toEqual([
+        expect.objectContaining({ itemId: item.id, photoId: photo.id, position: 0 }),
+      ]);
     });
 
-    it("should save multiple images with indexed paths", async () => {
+    it("should keep multiple uploads in order as separate photos", async () => {
       const files = [makeFile(), makeFile({ originalname: "test2.jpg" })];
       const result = await service.createItem({ files });
 
-      // Multi-image uses /items/{id}/{index}.ext pattern
+      const { photos, itemPhotos } = await storage.getEvidenceSnapshot();
       expect(result.item.imageUrls).toHaveLength(2);
-      expect(result.item.imageUrls![0]).toMatch(/\/0\.jpg$/);
-      expect(result.item.imageUrls![1]).toMatch(/\/1\.jpg$/);
+      expect(result.item.imageUrls).toEqual(
+        itemPhotos.map((link) => photos.find((photo) => photo.id === link.photoId)?.objectPath)
+      );
+      expect(itemPhotos.map((link) => link.position)).toEqual([0, 1]);
     });
 
     it("should set location if provided", async () => {
@@ -264,6 +278,8 @@ describe("ItemService", () => {
         },
         promptVersion: "valuation-test",
         staleAt: null,
+        scope: "item",
+        assumptions: ["visible_condition_only"],
       });
       expect(updated.valuation?.evidence.note).toContain("No marketplace or sales data");
     });
@@ -363,6 +379,9 @@ describe("ItemService", () => {
         ["an estimate with no range", { status: "estimated", marketability: "marketable", confidence: "medium" }],
         ["status contradicting marketability", { status: "nonmarketable", marketability: "marketable" }],
         ["a price on insufficient information", { status: "insufficient_information", marketability: "uncertain", likely: "200" }],
+        ["a v4 estimate without a scope", { status: "estimated", marketability: "marketable", low: "10", likely: "20", high: "30", confidence: "low" }],
+        ["a high-confidence category baseline", { status: "estimated", marketability: "marketable", scope: "category", low: "1", likely: "2", high: "3", confidence: "high" }],
+        ["an unknown assumption", { status: "estimated", marketability: "marketable", scope: "item", assumptions: ["authentic"], low: "10", likely: "20", high: "30", confidence: "low" }],
       ])("should reject %s and keep the record unchanged", async (_label, output) => {
         const premium = { chat: { completions: { create: vi.fn().mockResolvedValue(respond(output)) } } };
         const realAnalyzer = new OpenAIAnalyzer({} as never, premium as never);
@@ -384,6 +403,76 @@ describe("ItemService", () => {
         expect(premium.chat.completions.create).toHaveBeenCalledTimes(1);
         expect(await storage.getItem(item.id)).toEqual(before);
       });
+    });
+  });
+
+  describe("editItem", () => {
+    async function identified() {
+      return (await service.createItem({ files: [makeFile()] })).item; // FakeAnalyzer: "Test Item" / "Test"
+    }
+
+    it("records edited fields as user assertions without touching others", async () => {
+      const item = await identified();
+
+      const edited = await service.editItem(item.id, {
+        fields: { name: "Dad's drill", location: "Garage", notes: "Lent to Sam" },
+      });
+
+      expect(edited).toMatchObject({ name: "Dad's drill", location: "Garage", notes: "Lent to Sam", category: "Test" });
+      expect(Object.keys(edited.userAssertions ?? {}).sort()).toEqual(["location", "name", "notes"]);
+      expect(edited.userAssertions?.name).toEqual({ source: "user", assertedAt: expect.any(String) });
+    });
+
+    it("confirms current values as they are, upgrading capture context to the user's own", async () => {
+      const item = await identified();
+      await storage.updateItem(item.id, {
+        userAssertions: { category: { source: "batch_context", assertedAt: "2026-10-01T00:00:00.000Z" } },
+      });
+
+      const confirmed = await service.editItem(item.id, { confirm: ["name", "category"] });
+
+      expect(confirmed.name).toBe("Test Item");
+      expect(confirmed.userAssertions?.name?.source).toBe("user");
+      expect(confirmed.userAssertions?.category?.source).toBe("user");
+    });
+
+    it("keeps user edits through re-identification and records the AI's differing values", async () => {
+      const item = await identified();
+      await service.editItem(item.id, { fields: { name: "Dad's drill", category: "Tools" } });
+
+      const reidentified = await service.identifyItem(item.id);
+
+      expect(reidentified).toMatchObject({ name: "Dad's drill", category: "Tools", description: "Test description" });
+      expect(reidentified.identification?.suggestions).toEqual({ name: "Test Item", category: "Test" });
+    });
+
+    it("applies an AI suggestion in one step and records it as the user's choice", async () => {
+      const item = await identified();
+      await service.editItem(item.id, { fields: { name: "Thing" } });
+      await service.identifyItem(item.id);
+
+      const accepted = await service.editItem(item.id, { acceptSuggestions: ["name"] });
+
+      expect(accepted.name).toBe("Test Item");
+      expect(accepted.userAssertions?.name?.source).toBe("user");
+      expect(accepted.identification?.suggestions).toEqual({});
+      await expect(service.editItem(item.id, { acceptSuggestions: ["name"] })).rejects.toThrow("No suggestion for name");
+    });
+
+    it("marks a current estimate stale when what the item is changes, but not for location or notes", async () => {
+      const item = await identified();
+      await service.estimateValue(item.id);
+
+      const moved = await service.editItem(item.id, { fields: { location: "Attic", notes: "Box 3" } });
+      expect(moved.valuation?.staleAt).toBeNull();
+
+      const renamed = await service.editItem(item.id, { fields: { name: "Hammer drill" } });
+      expect(renamed.valuation).toMatchObject({ staleReason: "user_edited", likely: "10.00" });
+      expect(renamed.valuation?.staleAt).toEqual(expect.any(String));
+    });
+
+    it("throws if item not found", async () => {
+      await expect(service.editItem("nonexistent-id", { confirm: ["name"] })).rejects.toThrow("Item not found");
     });
   });
 

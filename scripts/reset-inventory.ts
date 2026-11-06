@@ -1,10 +1,10 @@
 /* scripts/reset-inventory.ts
  *
  * Truncates the inventory_items table (removes all rows, keeps schema).
- * Uses DATABASE_URL from .env to connect to Neon PostgreSQL.
+ * Local databases only (fail-closed); the target is verified before truncating.
  */
 import 'dotenv/config';
-import { getPgPoolFromUrl } from './_db';
+import { connectLocalDatabase, exitWithSafeError } from './_localDb';
 
 const url = process.env.DATABASE_URL;
 if (!url) {
@@ -15,13 +15,7 @@ if (!url) {
 
 async function main() {
   console.log('Connecting to database...');
-
-  // Parse URL to show which database we're connecting to (without credentials)
-  const dbUrl = new URL(url);
-  console.log(`Database: ${dbUrl.hostname}${dbUrl.pathname}`);
-
-  const pool = getPgPoolFromUrl(url);
-  const client = await pool.connect();
+  const { pool, client } = await connectLocalDatabase(url, 'truncate inventory_items');
 
   try {
     console.log('Truncating inventory_items table...');
@@ -37,7 +31,4 @@ async function main() {
   }
 }
 
-main().catch((e) => {
-  console.error('Unexpected error:', e);
-  process.exit(1);
-});
+main().catch(exitWithSafeError);

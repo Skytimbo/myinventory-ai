@@ -47,6 +47,8 @@ function estimate(overrides: Record<string, unknown> = {}): Record<string, unkno
     likely: "55.5",
     high: "$70.00",
     confidence: "medium",
+    scope: "item",
+    assumptions: [],
     rationale: "Used cordless drills of this type with a battery typically sell in this range.",
     missingInformation: ["battery condition"],
     ...overrides,
@@ -112,7 +114,7 @@ describe("OpenAIAnalyzer.estimateValue", () => {
     expect(prompt.indexOf("Marketability")).toBeLessThan(prompt.indexOf('"estimated"'));
     expect(prompt).toContain("You have NOT looked up any listings");
     expect(prompt).toContain("Never use 0 to mean unknown");
-    expect(result).toMatchObject({ model: "gpt-4o", promptVersion: "valuation-v3" });
+    expect(result).toMatchObject({ model: "gpt-4o", promptVersion: "valuation-v4" });
   });
 
   describe("valuation prompt rules (2026-10-24 production observations)", () => {
@@ -181,7 +183,7 @@ describe("OpenAIAnalyzer.estimateValue", () => {
       const prompt = await valuationPrompt();
       const refusalLine = prompt.split("\n").find((line) => line.trim().startsWith('- "insufficient_information"')) ?? "";
 
-      expect(refusalLine).toContain("not even a baseline range can be judged");
+      expect(refusalLine).toContain("not even a category baseline can be judged");
       expect(refusalLine).not.toMatch(/maker's mark|model number|underside|professional appraisal|e\.g\./);
       expect(prompt).not.toContain("cannot be established");
     });
@@ -331,20 +333,23 @@ describe("parseValuation", () => {
   });
 
   describe("valuation-v2/v3 guided outcomes still pass the unchanged contract", () => {
-    it("accepts a conservative baseline for a handmade mug, provenance listed as missing", () => {
+    it("accepts a conservative category baseline for a mug, provenance listed as missing", () => {
       expect(
         parseValuation(
           estimate({
-            marketabilityReason: "Handmade mugs sell secondhand as ordinary drinkware regardless of maker.",
-            low: "4",
-            likely: "8",
-            high: "15",
+            marketabilityReason: "Ceramic mugs sell secondhand as ordinary drinkware regardless of maker.",
+            scope: "category",
             confidence: "low",
-            rationale: "Baseline for a used handmade mug; excludes any collectible or maker premium.",
+            rationale: "Category baseline for a typical used mug; excludes any collectible or maker premium.",
             missingInformation: ["maker's mark", "underside photo"],
           })
         )
-      ).toMatchObject({ status: "estimated", likely: "8.00", missingInformation: ["maker's mark", "underside photo"] });
+      ).toMatchObject({
+        status: "estimated",
+        scope: "category",
+        assumptions: ["unattributed", "visible_condition_only"],
+        missingInformation: ["maker's mark", "underside photo"],
+      });
     });
 
     it("still accepts insufficient information when not even a baseline is defensible", () => {
@@ -395,11 +400,17 @@ describe("parseValuation", () => {
             likely: "25",
             high: "50",
             confidence: "low",
+            assumptions: ["as_is_untested"],
             rationale: "As-is baseline for an untested drill; excludes any premium for a confirmed working battery.",
             missingInformation: ["model number", "working condition", "battery health"],
           })
         )
-      ).toMatchObject({ status: "estimated", low: "10.00", high: "50.00", confidence: "low" });
+      ).toMatchObject({
+        status: "estimated",
+        scope: "item",
+        assumptions: ["as_is_untested", "visible_condition_only"],
+        confidence: "low",
+      });
     });
 
     it("keeps the river rock nonmarketable with no price", () => {
@@ -434,6 +445,136 @@ describe("parseValuation", () => {
       "A sturdy tool in good condition.",
     ])("keeps ordinary sentences: %s", (sentence) => {
       expect(stripEvidenceClaims(sentence)).toBe(sentence);
+    });
+  });
+});
+
+describe("valuation-v4: scope and assumptions", () => {
+  describe("the four 2026-10-24 evaluation objects (synthetic model outputs)", () => {
+    it("drill: item scope with untested functionality", () => {
+      expect(
+        parseValuation(
+          estimate({
+            scope: "item",
+            assumptions: ["as_is_untested"],
+            confidence: "low",
+            missingInformation: ["working condition", "battery health"],
+          })
+        )
+      ).toMatchObject({
+        status: "estimated",
+        scope: "item",
+        assumptions: ["as_is_untested", "visible_condition_only"],
+        confidence: "low",
+      });
+    });
+
+    it("mug: category scope with a derived unattributed assumption", () => {
+      const result = parseValuation(
+        estimate({ scope: "category", assumptions: [], confidence: "low", missingInformation: ["maker's mark"] })
+      );
+
+      expect(result).toMatchObject({
+        status: "estimated",
+        scope: "category",
+        assumptions: ["unattributed", "visible_condition_only"],
+      });
+      expect(Number(result.likely)).toBeGreaterThan(0);
+    });
+
+    it("river rock: nonmarketable, no scope or assumptions", () => {
+      expect(parseValuation(nonmarketable({ scope: "item", assumptions: ["as_is_untested"] }))).toMatchObject({
+        status: "nonmarketable",
+        scope: null,
+        assumptions: [],
+        likely: null,
+      });
+    });
+
+    it("fur boots: insufficient information, no scope or assumptions", () => {
+      expect(
+        parseValuation(insufficient({ missingInformation: ["fur type", "maker or origin"] }))
+      ).toMatchObject({ status: "insufficient_information", scope: null, assumptions: [], likely: null });
+    });
+  });
+
+  describe("validation", () => {
+    it.each([
+      ["missing scope", { scope: undefined }],
+      ["null scope", { scope: null }],
+      ["unknown scope", { scope: "appraisal" }],
+      ["an unknown assumption", { assumptions: ["authentic"] }],
+      ["assumptions that are not a list", { assumptions: "as_is_untested" }],
+      ["unattributed on an item estimate", { scope: "item", assumptions: ["unattributed"] }],
+      ["a high-confidence category baseline", { scope: "category", confidence: "high" }],
+    ])("rejects an estimate with %s", (_label, overrides) => {
+      expect(() => parseValuation(estimate(overrides))).toThrow(InvalidValuationError);
+    });
+
+    it("allows high confidence on an item estimate", () => {
+      expect(parseValuation(estimate({ scope: "item", confidence: "high" })).confidence).toBe("high");
+    });
+
+    it("always records visible_condition_only, deduplicated, in canonical order", () => {
+      expect(
+        parseValuation(
+          estimate({ scope: "category", assumptions: ["visible_condition_only", "as_is_untested", "unattributed", "as_is_untested"] })
+        ).assumptions
+      ).toEqual(["as_is_untested", "unattributed", "visible_condition_only"]);
+    });
+
+    it("treats missing assumptions as none chosen", () => {
+      expect(parseValuation(estimate({ assumptions: undefined })).assumptions).toEqual(["visible_condition_only"]);
+    });
+  });
+
+  describe("prompt", () => {
+    let premiumClient: ReturnType<typeof createMockClient>;
+
+    async function prompt(): Promise<string> {
+      premiumClient = createMockClient();
+      premiumClient.chat.completions.create.mockResolvedValue(makeAIResponse(nonmarketable()));
+      await new OpenAIAnalyzer(createMockClient() as never, premiumClient as never).estimateValue(input);
+      const content = premiumClient.chat.completions.create.mock.calls[0][0].messages[0].content as Array<{ type: string; text?: string }>;
+      return content.find((part) => part.type === "text")?.text ?? "";
+    }
+
+    it("defines every estimate as indicative private-party secondhand resale value", async () => {
+      const text = await prompt();
+
+      expect(text).toContain("indicative private-party secondhand resale value");
+      expect(text).toContain("not an insurance appraisal, retail price, replacement cost, or a valuation from verified comparable sales");
+    });
+
+    it("defines item and category scope and requests both new fields", async () => {
+      const text = await prompt();
+
+      expect(text).toContain('"item": the identification is specific');
+      expect(text).toContain('"category": the type of object is clear but its maker, model, or provenance is not');
+      expect(text).toContain('"scope": "item" | "category" | null');
+      expect(text).toContain('"assumptions": ["as_is_untested"] or []');
+    });
+
+    it("excludes exactly the approved classes from category baselines", async () => {
+      const text = await prompt();
+
+      expect(text).toContain(
+        'Never use "category" for antiques, art, jewelry, precious metals, or items made of fur, hide, ivory, feathers, or other animal materials'
+      );
+    });
+
+    it("treats as_is_untested as unknown functionality, not known failure", async () => {
+      const text = await prompt();
+
+      expect(text).toContain('"as_is_untested" means functionality is unknown, not known to be faulty');
+      expect(text).toContain("do not price it as defective or for parts unless the photos show damage");
+    });
+
+    it("forbids high-confidence category baselines and contains no dollar anchors", async () => {
+      const text = await prompt();
+
+      expect(text).toContain('A "category" baseline must use "low" or "medium" confidence, never "high"');
+      expect(text).not.toMatch(/\$\s?\d/);
     });
   });
 });

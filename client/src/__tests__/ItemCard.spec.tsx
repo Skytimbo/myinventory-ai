@@ -24,6 +24,8 @@ const createMockItem = (overrides: Partial<InventoryItem> = {}): InventoryItem =
   analysisMetadata: null,
   identification: null,
   valuation: null,
+  notes: null,
+  userAssertions: null,
   createdAt: '2025-01-01T00:00:00.000Z',
   ...overrides,
 });

@@ -19,7 +19,7 @@ Sign in and click **Download Backup** on the home page. The browser downloads `m
 
 Run script backups from your laptop, not inside Railway. The script pulls records from Neon and images from the authenticated deployed app, then writes the archive off-box.
 
-> **Requires migration 0003.** The current script reads the `identification` and `valuation` columns, so against a database that has not been migrated it fails with `column "identification" does not exist`. It cannot make the pre-migration backup before deploying migration 0003. For that backup, use the previous version of this script (commit `ebbbac2`, the `origin/main` before 0003) or `pg_dump`; see "Production deployment runbook" in `docs/AI-IDENTIFY-VALUATION.md`.
+> **Requires migration 0004.** The current script reads `notes`, `user_assertions`, and the capture evidence tables, so against a database without migration 0004 it fails (for example `relation "capture_sessions" does not exist`). It cannot make the pre-migration backup before deploying migration 0004. For that backup, use the version of this script on `main` at `d6a6207` (writes `0003_identify_valuation` archives) or `pg_dump`.
 
 Required environment variables:
 
@@ -50,11 +50,11 @@ backups/myinventory-backup-<timestamp>.tar.gz
 Archive contents:
 
 - `manifest.json`: backup metadata, schema version, counts, image hashes, and completeness audit results.
-- `inventory.json`: lossless source of truth for restore verification, including the `identification` and `valuation` columns (archive schema version `0003_identify_valuation`).
-- `inventory.csv`: human-readable convenience export with value status, estimate range, staleness, evidence basis, and any legacy estimate in separate columns. Do not use this for restore.
-- `images/`: image files referenced by the database (downloaded from authenticated `/objects/*` URLs by the script, or read from the uploads volume by the in-app backup).
+- `inventory.json`: lossless source of truth for restore (archive schema version `0004_capture_evidence`): every `inventory_items` column, including `identification`, `valuation`, `notes`, and `user_assertions` (which fields you entered or confirmed, and which came from capture context), plus `evidence`: every `capture_sessions`, `capture_batches`, `photos`, and `item_photos` row exactly as stored (ids, timestamps, batch context, recorded SHA256 and size, original filename, link order).
+- `inventory.csv`: human-readable convenience export with location, notes, the fields you confirmed (`Confirmed By You`), value status, estimate range, staleness, evidence basis, and any legacy estimate in separate columns. Do not use this for restore.
+- `images/`: every image referenced by an item **and every registered photo, including photos not linked to any item** (downloaded from authenticated `/objects/*` URLs by the script, or read from the uploads volume by the in-app backup). `manifest.json` records `photoCount`, `unassignedPhotoCount`, and for each file its hash, the items using it, and its `photoId`.
 
-The backup fails if any database image reference cannot be downloaded. Backup v1 audits database-referenced images only; it does not list the Railway volume, so unreferenced orphan files on the volume are outside this check.
+The backup fails if any item image or photo file is missing (`BACKUP_INCOMPLETE`), or if a photo's bytes no longer match the SHA256 recorded when it was captured (`BACKUP_INTEGRITY`). The audit covers files that some database row refers to; it does not list the Railway volume, so files no row refers to are outside this check.
 
 After creating a backup, copy the archive somewhere that is itself backed up, such as Time Machine, an external drive, or cloud file storage. `./backups/` is intentionally gitignored.
 
@@ -70,7 +70,7 @@ export DATABASE_URL_TEST='postgresql://...'  # test DB only
 export RESTORE_UPLOADS_DIR='/tmp/myinventory-restore-uploads'
 ```
 
-`DATABASE_URL_TEST` must not point at the same database as `DATABASE_URL`. The verifier refuses to run if they match.
+`DATABASE_URL_TEST` must not point at the same database as `DATABASE_URL`, and it must be PostgreSQL on this machine (localhost or a local socket): the verifier truncates it inside a rolled-back transaction, and refuses any other target before connecting. Create a disposable local database for it, for example `createdb mi_restorecheck` followed by `psql -d mi_restorecheck -f migrations/railway-init.sql`.
 
 `RESTORE_UPLOADS_DIR` must be empty or absent. The verifier copies restored images into this directory using the same relative layout the app expects under `uploads/`.
 
@@ -87,11 +87,16 @@ What verification does:
 - copies archive images into `RESTORE_UPLOADS_DIR`;
 - compares restored image SHA256 hashes against the manifest;
 - compares `analysisMetadata.imageHash` where older/newer records provide it;
-- inserts inventory records into `DATABASE_URL_TEST` inside a transaction;
-- checks restored item count;
+- checks that every batch belongs to an archived session, every photo to an archived batch, every item–photo link to an archived item and photo, and every photo's restored bytes against its recorded SHA256;
+- inserts items, sessions, batches, photos, and links into `DATABASE_URL_TEST` inside a transaction;
+- checks restored row counts for all five tables;
 - rolls back the transaction so the test database is not left changed.
 
-Restore verification accepts `0003_identify_valuation` archives and older `0002_analysis_metadata` archives; the latter restore `identification` and `valuation` as null. `DATABASE_URL_TEST` must have migration 0003 applied.
+Restore verification accepts `0004_capture_evidence` archives and older `0003_identify_valuation` and `0002_analysis_metadata` archives. Older archives restore with no capture evidence, and missing columns (`identification`, `valuation`, `notes`, `user_assertions`) as null. `DATABASE_URL_TEST` must have migrations through 0004 applied.
+
+## Local Restore
+
+`pnpm restore:local <archive>` performs a real restore into the local development database and `uploads-dev/` from `.env.development` (never `.env` or the shell). It refuses a non-local database, a database with any rows in the five tables, and any photo file that already exists, so it never deletes or overwrites anything. Start from `pnpm dev:reset --empty`. It runs the same archive checks as restore verification, then inserts everything in one transaction. For 0002/0003 archives it then registers the restored item images as photo evidence. See `docs/LOCAL-DEVELOPMENT.md`.
 
 The archive-level checks (everything except the database insert) live in `scripts/restore-verify-archive.ts`. The server test suite runs them against archives built from synthetic data, including archives downloaded from `GET /api/backup`, so format regressions are caught without a database.
 
@@ -102,7 +107,7 @@ If `analysisMetadata.imageHash` mismatches but manifest hashes match, the archiv
 This runbook is intentionally manual for v1. Practice it against a disposable Railway/Neon environment before relying on it for a real incident.
 
 1. Provision a fresh Neon/Postgres database.
-2. Apply the current schema and migrations, including `migrations/0002_analysis_metadata.sql` and `migrations/0003_identify_valuation.sql`.
+2. Apply the current schema and migrations, including `migrations/0002_analysis_metadata.sql`, `migrations/0003_identify_valuation.sql`, and `migrations/0004_capture_evidence.sql`.
 3. Extract the backup archive locally:
 
    ```bash
@@ -110,8 +115,8 @@ This runbook is intentionally manual for v1. Practice it against a disposable Ra
    tar -xzf backups/myinventory-backup-<timestamp>.tar.gz -C /tmp/myinventory-restore
    ```
 
-4. Load `inventory.json` into the fresh database using a purpose-built restore script or SQL import adapted from `scripts/restore-verify.ts`. Use `inventory.json`; do not restore from CSV.
-5. Restore image files from `/tmp/myinventory-restore/images/items/...` onto the app volume under `uploads/items/...` or Railway's mounted `/app/uploads/items/...`.
+4. Load `inventory.json` (items and `evidence`) into the fresh database with `insertArchiveRows` from `scripts/restore-db.ts`, as `scripts/restore-local.ts` does for local databases. Use `inventory.json`; do not restore from CSV.
+5. Restore image files from `/tmp/myinventory-restore/images/items/...` and `images/photos/...` onto the app volume under `uploads/` (Railway's mounted `/app/uploads/`), keeping the same relative paths.
 6. Deploy the app with the restored `DATABASE_URL`, `LOCAL_STORAGE_DIR=/app/uploads`, `SESSION_SECRET`, and `INVENTORY_PASSWORD`.
 7. Sign in and confirm item list, image loading, and a sample item detail view.
 8. Run a fresh backup and `pnpm restore:verify` against the restored environment to prove the recovery path.
@@ -119,5 +124,6 @@ This runbook is intentionally manual for v1. Practice it against a disposable Ra
 ## Limitations
 
 - Backup v1 is manual. It only protects changes made before the last time you ran it or downloaded it in-app.
-- Backup v1 does not enumerate Railway volume orphan files that are not referenced by the database.
+- Backup v1 does not enumerate Railway volume files that no database row refers to.
+- Restore into production is a manual runbook; `pnpm restore:local` only targets the local development database.
 - Backup v1 does not upload archives to cloud storage. Copy archives to a backed-up destination after creation.

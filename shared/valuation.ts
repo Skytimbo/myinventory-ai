@@ -6,9 +6,16 @@
  * - Legacy amounts (pre-0003 combined analysis) stay accessible but are never
  *   treated as current valuations.
  * - Stale valuations (identification rerun since) never count as current.
+ * - Every estimate is an indicative private-party secondhand resale value.
+ *   Estimates made before valuation-v4 have no recorded scope and are shown
+ *   as "basis not recorded", never reclassified.
  */
 
 import type { AnalysisMetadata, Identification, Valuation } from "./schema";
+import type { ValuationAssumption } from "./valuationVocabulary";
+
+/** Scope of an estimate as displayed; "unrecorded" = estimated before valuation-v4 */
+export type EstimateScope = "item" | "category" | "unrecorded";
 
 export type ValueStatus =
   | "not_evaluated"
@@ -35,6 +42,8 @@ export interface ValuationView {
   isCurrentEstimate: boolean;
   /** Likely value in USD when isCurrentEstimate, otherwise null */
   currentValue: number | null;
+  /** Scope when status is "estimated" (stale or not); null otherwise */
+  scope: EstimateScope | null;
   legacy: LegacyEstimate | null;
 }
 
@@ -56,6 +65,7 @@ export function getValuationView(item: ValuationFields): ValuationView {
       isStale: false,
       isCurrentEstimate: false,
       currentValue: null,
+      scope: null,
       legacy,
     };
   }
@@ -71,8 +81,13 @@ export function getValuationView(item: ValuationFields): ValuationView {
     isStale,
     isCurrentEstimate,
     currentValue: isCurrentEstimate ? likely : null,
+    scope: valuation.status === "estimated" ? getEstimateScope(valuation) : null,
     legacy,
   };
+}
+
+function getEstimateScope(valuation: Valuation): EstimateScope {
+  return valuation.scope === "item" || valuation.scope === "category" ? valuation.scope : "unrecorded";
 }
 
 function getLegacyEstimate(item: ValuationFields): LegacyEstimate | null {
@@ -90,9 +105,18 @@ function getLegacyEstimate(item: ValuationFields): LegacyEstimate | null {
 }
 
 export interface ValuationSummary {
-  /** Sum of current (non-stale, new-contract) likely values */
-  currentTotal: number;
-  currentCount: number;
+  /** Current (non-stale) item-scope estimates: sum of likely values */
+  itemTotal: number;
+  itemCount: number;
+  /** Current (non-stale) category baselines: sum of likely values */
+  categoryTotal: number;
+  categoryCount: number;
+  /** itemTotal + categoryTotal; each item appears in at most one bucket */
+  combinedTotal: number;
+  combinedCount: number;
+  /** Current estimates without a recorded basis (before valuation-v4); not in combinedTotal */
+  unrecordedTotal: number;
+  unrecordedCount: number;
   staleCount: number;
   legacyOnlyCount: number;
   notEvaluatedCount: number;
@@ -102,8 +126,14 @@ export interface ValuationSummary {
 
 export function summarizeValuations(items: ValuationFields[]): ValuationSummary {
   const summary: ValuationSummary = {
-    currentTotal: 0,
-    currentCount: 0,
+    itemTotal: 0,
+    itemCount: 0,
+    categoryTotal: 0,
+    categoryCount: 0,
+    combinedTotal: 0,
+    combinedCount: 0,
+    unrecordedTotal: 0,
+    unrecordedCount: 0,
     staleCount: 0,
     legacyOnlyCount: 0,
     notEvaluatedCount: 0,
@@ -111,6 +141,7 @@ export function summarizeValuations(items: ValuationFields[]): ValuationSummary 
     insufficientCount: 0,
   };
 
+  // Each item has one current valuation, so it lands in exactly one branch
   for (const item of items) {
     const view = getValuationView(item);
     if (view.isStale) {
@@ -118,8 +149,16 @@ export function summarizeValuations(items: ValuationFields[]): ValuationSummary 
     }
 
     if (view.isCurrentEstimate && view.currentValue !== null) {
-      summary.currentTotal += view.currentValue;
-      summary.currentCount += 1;
+      if (view.scope === "item") {
+        summary.itemTotal += view.currentValue;
+        summary.itemCount += 1;
+      } else if (view.scope === "category") {
+        summary.categoryTotal += view.currentValue;
+        summary.categoryCount += 1;
+      } else {
+        summary.unrecordedTotal += view.currentValue;
+        summary.unrecordedCount += 1;
+      }
     } else if (view.status === "not_evaluated") {
       summary.notEvaluatedCount += 1;
       if (view.legacy && !view.legacy.isPlaceholder) {
@@ -132,6 +171,8 @@ export function summarizeValuations(items: ValuationFields[]): ValuationSummary 
     }
   }
 
+  summary.combinedTotal = summary.itemTotal + summary.categoryTotal;
+  summary.combinedCount = summary.itemCount + summary.categoryCount;
   return summary;
 }
 
@@ -185,16 +226,43 @@ export const VALUE_STATUS_LABELS: Record<ValueStatus, string> = {
   insufficient_information: "Value can't be established",
 };
 
+export const ESTIMATE_SCOPE_LABELS: Record<EstimateScope, string> = {
+  item: "Item estimate",
+  category: "Category baseline",
+  unrecorded: "Basis not recorded",
+};
+
+export const ASSUMPTION_LABELS: Record<ValuationAssumption, string> = {
+  as_is_untested: "Functionality untested (unknown, not known to be faulty)",
+  unattributed: "Maker and provenance unknown; excludes any maker, collectible, authenticity, or provenance premium",
+  visible_condition_only: "Condition judged from photos only",
+};
+
+/** Shown with every estimate */
+export const INDICATIVE_VALUE_NOTE =
+  "Indicative private-party resale value from photos (AI judgment). Not an appraisal, retail price, or replacement cost; condition, authenticity, and market were not verified.";
+
+/** Readable assumptions for display, excluding the photo-only note shown globally */
+export function describeAssumptions(assumptions: ValuationAssumption[] | undefined): string[] {
+  return (assumptions ?? [])
+    .filter((assumption) => assumption !== "visible_condition_only")
+    .map((assumption) => ASSUMPTION_LABELS[assumption]);
+}
+
 /** One-line, human-readable description used by exports */
 export function describeValuation(view: ValuationView): string {
   const valuation = view.valuation;
   let text = VALUE_STATUS_LABELS[view.status];
 
   if (valuation && view.status === "estimated") {
+    const scope = view.scope ?? "unrecorded";
+    const assumptions = describeAssumptions(valuation.assumptions);
     // Plain hyphen: jsPDF's standard fonts do not reliably render an en dash
-    text = `${formatUsd(valuation.low)} - ${formatUsd(valuation.high)} (likely ${formatUsd(
+    text = `${ESTIMATE_SCOPE_LABELS[scope]}: ${formatUsd(valuation.low)} - ${formatUsd(valuation.high)} (likely ${formatUsd(
       valuation.likely
-    )}, ${valuation.confidence ?? "low"} confidence, AI judgment)`;
+    )}, ${valuation.confidence ?? "low"} confidence${
+      assumptions.length ? `; assumes: ${assumptions.join("; ")}` : ""
+    }; indicative AI judgment, not an appraisal)`;
   } else if (valuation && view.status === "insufficient_information" && valuation.missingInformation.length) {
     text += ` (needs: ${valuation.missingInformation.join(", ")})`;
   }
@@ -215,6 +283,8 @@ export const VALUATION_CSV_HEADERS = [
   "Estimate High",
   "Estimate Stale",
   "Evidence Basis",
+  "Valuation Scope",
+  "Assumptions",
   "Legacy Estimate",
 ];
 
@@ -228,6 +298,8 @@ export function valuationCsvCells(item: ValuationFields): string[] {
     view.valuation?.high ?? "",
     view.isStale ? "yes" : "",
     view.valuation?.evidence.basis ?? "",
+    view.scope ?? "",
+    (view.valuation?.assumptions ?? []).join("; "),
     view.legacy?.amount ?? "",
   ];
 }

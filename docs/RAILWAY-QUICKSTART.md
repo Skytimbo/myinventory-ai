@@ -96,11 +96,7 @@ psql "$RAILWAY_DATABASE_URL" < backups/railway-migration-YYYYMMDD-HHMMSS/databas
 psql "$RAILWAY_DATABASE_URL" -c 'SELECT COUNT(*) FROM inventory_items;'
 ```
 
-If the database predates AI analysis metadata, apply the safe schema patch:
-
-```bash
-pnpm exec tsx scripts/run-migration.ts migrations/0002_analysis_metadata.sql
-```
+If the database predates AI analysis metadata, apply `migrations/0002_analysis_metadata.sql` in your provider's SQL editor. `scripts/run-migration.ts` only runs against PostgreSQL on this machine (see `docs/LOCAL-DEVELOPMENT.md`).
 
 ---
 

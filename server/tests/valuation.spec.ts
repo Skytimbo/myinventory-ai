@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { Valuation } from "@shared/schema";
 import {
+  describeValuation,
   getIdentificationStatus,
+  VALUATION_CSV_HEADERS,
+  valuationCsvCells,
   getValuationView,
   summarizeValuations,
 } from "@shared/valuation";
@@ -146,19 +149,24 @@ describe("getValuationView", () => {
 });
 
 describe("summarizeValuations", () => {
-  it("totals only current estimates and reports everything else separately", () => {
+  it("buckets item, category, and unrecorded-basis estimates; counts each item once", () => {
+    const item = (likely: string) => createValuation({ likely, scope: "item", assumptions: ["as_is_untested", "visible_condition_only"] });
+    const category = (likely: string) =>
+      createValuation({ likely, scope: "category", confidence: "low", assumptions: ["unattributed", "visible_condition_only"] });
     const summary = summarizeValuations([
-      { valuation: createValuation({ likely: "55.00" }), ...noLegacy },
-      { valuation: createValuation({ likely: "20.00" }), ...noLegacy },
-      {
-        valuation: createValuation({ likely: "900.00", staleAt: "2026-10-24T00:00:00.000Z" }),
-        ...noLegacy,
-      },
+      { valuation: item("55.00"), ...noLegacy },
+      { valuation: item("20.00"), ...noLegacy },
+      { valuation: category("6.00"), ...noLegacy },
+      // v2/v3 estimate: no recorded basis, excluded from the combined total
+      { valuation: createValuation({ likely: "40.00" }), ...noLegacy },
+      // stale v4 estimate, and a current estimate that also carries a legacy amount
+      { valuation: { ...item("900.00"), staleAt: "2026-10-24T00:00:00.000Z" }, ...noLegacy },
+      { valuation: item("10.00"), estimatedValue: "125.00", valueConfidence: "medium", valueRationale: null },
       { valuation: null, estimatedValue: "300.00", valueConfidence: "high", valueRationale: null },
       { valuation: null, estimatedValue: "0.00", valueConfidence: null, valueRationale: null },
       { valuation: null, ...noLegacy },
       {
-        valuation: createValuation({ status: "nonmarketable", low: null, likely: null, high: null }),
+        valuation: createValuation({ status: "nonmarketable", low: null, likely: null, high: null, scope: null, assumptions: [] }),
         ...noLegacy,
       },
       {
@@ -167,20 +175,109 @@ describe("summarizeValuations", () => {
           low: null,
           likely: null,
           high: null,
+          scope: null,
+          assumptions: [],
         }),
         ...noLegacy,
       },
     ]);
 
     expect(summary).toEqual({
-      currentTotal: 75,
-      currentCount: 2,
+      itemTotal: 85,
+      itemCount: 3,
+      categoryTotal: 6,
+      categoryCount: 1,
+      combinedTotal: 91,
+      combinedCount: 4,
+      unrecordedTotal: 40,
+      unrecordedCount: 1,
       staleCount: 1,
       legacyOnlyCount: 1,
       notEvaluatedCount: 3,
       nonmarketableCount: 1,
       insufficientCount: 1,
     });
+    // 11 items: every one lands in exactly one of these buckets
+    expect(
+      summary.itemCount + summary.categoryCount + summary.unrecordedCount + summary.staleCount +
+        summary.notEvaluatedCount + summary.nonmarketableCount + summary.insufficientCount
+    ).toBe(11);
+  });
+
+  it("reports no combined total when only unrecorded-basis estimates exist", () => {
+    const summary = summarizeValuations([{ valuation: createValuation({ likely: "40.00" }), ...noLegacy }]);
+
+    expect(summary).toMatchObject({ combinedTotal: 0, combinedCount: 0, unrecordedCount: 1 });
+  });
+});
+
+describe("valuation scope and historical records", () => {
+  it.each([
+    ["v4 item estimate", { scope: "item" as const }, "item"],
+    ["v4 category baseline", { scope: "category" as const, confidence: "low" as const }, "category"],
+    ["v2/v3 estimate without scope", {}, "unrecorded"],
+  ])("reads a %s", (_label, overrides, scope) => {
+    expect(getValuationView({ valuation: createValuation(overrides), ...noLegacy }).scope).toBe(scope);
+  });
+
+  it("keeps the scope of a stale estimate but never counts it", () => {
+    const view = getValuationView({
+      valuation: createValuation({ scope: "category", staleAt: "2026-10-24T00:00:00.000Z" }),
+      ...noLegacy,
+    });
+
+    expect(view).toMatchObject({ scope: "category", isStale: true, isCurrentEstimate: false });
+  });
+
+  it("gives non-estimated and v1 legacy records no scope", () => {
+    expect(getValuationView({ valuation: null, estimatedValue: "125.00", valueConfidence: "medium", valueRationale: null }).scope).toBeNull();
+    expect(
+      getValuationView({
+        valuation: createValuation({ status: "nonmarketable", low: null, likely: null, high: null }),
+        ...noLegacy,
+      }).scope
+    ).toBeNull();
+  });
+
+  it("describes each scope and its assumptions without implying an appraisal", () => {
+    const item = describeValuation(
+      getValuationView({
+        valuation: createValuation({ scope: "item", confidence: "low", assumptions: ["as_is_untested", "visible_condition_only"] }),
+        ...noLegacy,
+      })
+    );
+    const category = describeValuation(
+      getValuationView({
+        valuation: createValuation({ scope: "category", confidence: "low", assumptions: ["unattributed", "visible_condition_only"] }),
+        ...noLegacy,
+      })
+    );
+    const unrecorded = describeValuation(getValuationView({ valuation: createValuation(), ...noLegacy }));
+
+    expect(item).toMatch(/^Item estimate: /);
+    expect(item).toContain("Functionality untested (unknown, not known to be faulty)");
+    expect(category).toMatch(/^Category baseline: /);
+    expect(category).toContain("excludes any maker, collectible, authenticity, or provenance premium");
+    expect(unrecorded).toMatch(/^Basis not recorded: /);
+    for (const text of [item, category, unrecorded]) {
+      expect(text).toContain("indicative AI judgment, not an appraisal");
+    }
+  });
+
+  it("exports scope and assumptions as CSV cells, blank when not estimated", () => {
+    const header = VALUATION_CSV_HEADERS;
+    const cells = valuationCsvCells({
+      valuation: createValuation({ scope: "category", confidence: "low", assumptions: ["unattributed", "visible_condition_only"] }),
+      ...noLegacy,
+    });
+    const oldCells = valuationCsvCells({ valuation: createValuation(), ...noLegacy });
+    const none = valuationCsvCells({ valuation: null, ...noLegacy });
+
+    expect(cells[header.indexOf("Valuation Scope")]).toBe("category");
+    expect(cells[header.indexOf("Assumptions")]).toBe("unattributed; visible_condition_only");
+    expect(oldCells[header.indexOf("Valuation Scope")]).toBe("unrecorded");
+    expect(oldCells[header.indexOf("Assumptions")]).toBe("");
+    expect(none[header.indexOf("Valuation Scope")]).toBe("");
   });
 });
 

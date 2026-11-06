@@ -1,7 +1,8 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, uuid, decimal, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, uuid, decimal, jsonb, integer, primaryKey } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+import { VALUATION_ASSUMPTIONS, VALUATION_SCOPES } from "./valuationVocabulary";
 
 export const analysisMetadataSchema = z
   .object({
@@ -29,14 +30,32 @@ export const identificationSchema = z
     model: z.string(),
     identifiedAt: z.string(),
     promptVersion: z.string(),
+    // AI values that were NOT applied because the user had asserted the field
+    suggestions: z
+      .object({
+        name: z.string(),
+        description: z.string(),
+        category: z.string(),
+        tags: z.array(z.string()),
+      })
+      .partial()
+      .optional(),
   })
   .nullable();
 
 export type Identification = NonNullable<z.infer<typeof identificationSchema>>;
 
+export {
+  VALUATION_ASSUMPTIONS,
+  VALUATION_SCOPES,
+  type ValuationAssumption,
+  type ValuationScope,
+} from "./valuationVocabulary";
+
 /**
  * Result of the Estimate Value action (migration 0003).
  * "not_evaluated" is never stored: it is the absence of a valuation.
+ * Every estimate is an indicative private-party secondhand resale value.
  */
 export const valuationSchema = z
   .object({
@@ -66,10 +85,30 @@ export const valuationSchema = z
     promptVersion: z.string(),
     staleAt: z.string().nullable(),
     staleReason: z.string().nullable(),
+    // valuation-v4+. Absent on earlier records, which have no recorded basis
+    // and must not be reinterpreted. null/[] on non-estimated outcomes.
+    scope: z.enum(VALUATION_SCOPES).nullable().optional(),
+    assumptions: z.array(z.enum(VALUATION_ASSUMPTIONS)).optional(),
   })
   .nullable();
 
 export type Valuation = NonNullable<z.infer<typeof valuationSchema>>;
+
+/** Item fields a user can assert (Milestone 1). AI identification never overwrites an asserted field. */
+export const ASSERTABLE_FIELDS = ["name", "description", "category", "tags", "location", "notes"] as const;
+export type AssertableField = (typeof ASSERTABLE_FIELDS)[number];
+
+/**
+ * Provenance of a user-supplied value. "user": typed or confirmed by the user;
+ * "batch_context": supplied as capture-batch context. Both are user
+ * assertions, not independently verified facts.
+ */
+export const userAssertionSchema = z.object({
+  source: z.enum(["user", "batch_context"]),
+  assertedAt: z.string(),
+});
+export type UserAssertion = z.infer<typeof userAssertionSchema>;
+export type UserAssertions = Partial<Record<AssertableField, UserAssertion>>;
 
 export const inventoryItems = pgTable("inventory_items", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -89,13 +128,77 @@ export const inventoryItems = pgTable("inventory_items", {
   analysisMetadata: jsonb("analysis_metadata").$type<AnalysisMetadata>(),
   identification: jsonb("identification").$type<Identification>(),
   valuation: jsonb("valuation").$type<Valuation>(),
+  // Milestone 1 (migration 0004)
+  notes: text("notes"),
+  userAssertions: jsonb("user_assertions").$type<UserAssertions>(),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
+
+// ---------------------------------------------------------------------------
+// Capture evidence (migration 0004). Photos have identities independent of
+// inventory items; an item references photos through item_photos, so one
+// photo can support several items and a photo may support none.
+// ---------------------------------------------------------------------------
+
+/** Optional context a user supplies for a capture batch (all free text) */
+export interface BatchContext {
+  location?: string;
+  category?: string;
+  container?: string;
+  purpose?: string;
+}
+
+export const PHOTO_SOURCES = ["batch_upload", "item_upload", "legacy_registration"] as const;
+export type PhotoSource = (typeof PHOTO_SOURCES)[number];
+
+export const captureSessions = pgTable("capture_sessions", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  title: text("title").notNull(),
+  notes: text("notes"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const captureBatches = pgTable("capture_batches", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  sessionId: uuid("session_id").notNull().references(() => captureSessions.id),
+  context: jsonb("context").$type<BatchContext>().notNull().default(sql`'{}'::jsonb`),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const photos = pgTable("photos", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  batchId: uuid("batch_id").references(() => captureBatches.id),
+  objectPath: text("object_path").notNull().unique(),
+  sha256: text("sha256").notNull(),
+  bytes: integer("bytes").notNull(),
+  mimeType: text("mime_type").notNull(),
+  originalFilename: text("original_filename"),
+  source: text("source").$type<PhotoSource>().notNull(),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const itemPhotos = pgTable(
+  "item_photos",
+  {
+    itemId: uuid("item_id").notNull().references(() => inventoryItems.id, { onDelete: "cascade" }),
+    photoId: uuid("photo_id").notNull().references(() => photos.id),
+    position: integer("position").notNull().default(0),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [primaryKey({ columns: [table.itemId, table.photoId] })]
+);
+
+export type CaptureSession = typeof captureSessions.$inferSelect;
+export type CaptureBatch = typeof captureBatches.$inferSelect;
+export type Photo = typeof photos.$inferSelect;
+export type InsertPhoto = typeof photos.$inferInsert;
+export type ItemPhoto = typeof itemPhotos.$inferSelect;
 
 export const insertInventoryItemSchema = createInsertSchema(inventoryItems, {
   analysisMetadata: analysisMetadataSchema.optional(),
   identification: identificationSchema.optional(),
   valuation: valuationSchema.optional(),
+  userAssertions: z.record(userAssertionSchema).nullable().optional(),
 }).omit({
   id: true,
   createdAt: true,

@@ -189,6 +189,76 @@ describe("GET /api/backup", () => {
     expect(await fs.readFile(path.join(restoreUploadsDir, "items", "single.png"))).toEqual(single);
   });
 
+  it("keeps the whole captured collection through edit, re-identify, backup, and restore", async () => {
+    const { app } = await createBackupTestApp();
+    const agent = request.agent(app);
+    await agent.post("/api/auth/login").send({ password: TEST_PASSWORD }).expect(200);
+    const jpeg = (marker: number) =>
+      Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, marker]), Buffer.alloc(200, marker)]);
+    const originals = [jpeg(1), jpeg(2), jpeg(3), jpeg(4)];
+
+    // 1–2. Upload several photos with batch context
+    const session = (await agent.post("/api/capture-sessions").send({ title: "Garage sweep" }).expect(201)).body;
+    let upload = agent.post(`/api/capture-sessions/${session.id}/batches`);
+    originals.forEach((bytes, index) => (upload = upload.attach("photos", bytes, `IMG_${index}.jpg`)));
+    const { photos } = (await upload.field("location", "Garage").field("container", "Blue bin").expect(201)).body;
+
+    // 3. Several entries: one from two photos (identified), one from one photo; one photo left unsorted
+    const drill = (
+      await agent.post("/api/items/from-photos").send({ photoIds: [photos[0].id, photos[1].id], identify: true }).expect(201)
+    ).body;
+    const lamp = (await agent.post("/api/items/from-photos").send({ photoIds: [photos[2].id], name: "Desk lamp" }).expect(201)).body;
+
+    // 4. Correct one identity, confirm the other details
+    await agent.patch(`/api/items/${drill.id}`).send({ fields: { name: "Dad's drill", notes: "Lent to Sam" } }).expect(200);
+    await agent.patch(`/api/items/${drill.id}`).send({ confirm: ["description", "tags"] }).expect(200);
+
+    // 5. Re-identify without losing confirmations
+    const reidentified = (await agent.post(`/api/items/${drill.id}/identify`).expect(200)).body;
+    expect(reidentified).toMatchObject({ name: "Dad's drill", notes: "Lent to Sam", location: "Garage › Blue bin" });
+    expect(reidentified.identification.suggestions).toMatchObject({ name: "Test Item" });
+
+    // 6. Retrieve the original photographs, byte for byte
+    for (const [index, photo] of photos.entries()) {
+      const served = await agent.get(photo.objectPath).buffer(true).parse(binaryParser).expect(200);
+      expect(served.body).toEqual(originals[index]);
+    }
+
+    // 7. Back up and restore the entire collection
+    const backup = await agent.get("/api/backup").buffer(true).parse(binaryParser).expect(200);
+    const tempDir = await makeTempDir("backup-workflow-test-");
+    const archivePath = path.join(tempDir, "backup.tar.gz");
+    const restoreUploadsDir = path.join(tempDir, "restored-uploads");
+    await fs.writeFile(archivePath, backup.body);
+
+    const restored = await verifyBackupArchive({ archivePath, restoreUploadsDir });
+
+    expect(restored.manifest).toMatchObject({ itemCount: 2, photoCount: 4, unassignedPhotoCount: 1, downloadedImageCount: 4 });
+    expect(restored.evidence.captureSessions).toEqual([expect.objectContaining({ id: session.id, title: "Garage sweep" })]);
+    expect(restored.evidence.captureBatches[0].context).toEqual({ location: "Garage", container: "Blue bin" });
+    expect(restored.evidence.itemPhotos.map((link) => [link.itemId, link.photoId, link.position]).sort()).toEqual(
+      [
+        [drill.id, photos[0].id, 0],
+        [drill.id, photos[1].id, 1],
+        [lamp.id, photos[2].id, 0],
+      ].sort()
+    );
+    const restoredDrill = restored.items.find((item) => item.id === drill.id)!;
+    expect(restoredDrill).toMatchObject({ name: "Dad's drill", notes: "Lent to Sam" });
+    expect(Object.fromEntries(Object.entries(restoredDrill.userAssertions ?? {}).map(([field, a]) => [field, a?.source]))).toEqual({
+      name: "user",
+      notes: "user",
+      description: "user",
+      tags: "user",
+      location: "batch_context",
+    });
+    expect(restoredDrill.identification?.suggestions).toMatchObject({ name: "Test Item" });
+    for (const [index, photo] of photos.entries()) {
+      const file = await fs.readFile(path.join(restoreUploadsDir, ...photo.objectPath.replace("/objects/", "").split("/")));
+      expect(file).toEqual(originals[index]);
+    }
+  });
+
   it("rate limits repeated backup requests", async () => {
     const { app } = await createBackupTestApp();
     const agent = request.agent(app);
@@ -271,6 +341,8 @@ function createInventoryItem(overrides: Partial<InventoryItem>): InventoryItem {
     analysisMetadata: null,
     identification: null,
     valuation: null,
+    notes: null,
+    userAssertions: null,
     createdAt: "2026-06-13T00:00:00.000Z",
     ...overrides,
   };

@@ -63,16 +63,22 @@ jobs:
         env:
           PGPASSWORD: postgres
 
-      - name: Reset and seed test database
+      # Same schema files, in the same order, as scripts/dev-setup.ts
+      - name: Apply schema
+        run: |
+          for f in railway-init 0002_analysis_metadata 0003_identify_valuation 0004_capture_evidence; do
+            psql -v ON_ERROR_STOP=1 -h localhost -U postgres -d test -f "migrations/$f.sql"
+          done
         env:
-          DATABASE_URL_TEST: postgresql://postgres:postgres@localhost:5432/test
-          NODE_ENV: test
-        run: pnpm db:reset && pnpm db:seed
+          PGPASSWORD: postgres
 
       - name: Run server tests
         env:
           DATABASE_URL_TEST: postgresql://postgres:postgres@localhost:5432/test
           NODE_ENV: test
+          # Non-secret placeholders, as in .env.development.example
+          ANALYZER_PROVIDER: mock
+          OPENAI_API_KEY: mock-analyzer-no-key-required
         run: pnpm test:server
 
   test-client:
@@ -136,19 +142,23 @@ jobs:
         env:
           PGPASSWORD: postgres
 
-      - name: Seed DB for E2E
-        env:
-          DATABASE_URL_TEST: postgresql://postgres:postgres@localhost:5432/test
-          NODE_ENV: test
+      # Same schema files, in the same order, as scripts/dev-setup.ts
+      - name: Apply schema
         run: |
-          pnpm db:reset
-          pnpm db:seed
+          for f in railway-init 0002_analysis_metadata 0003_identify_valuation 0004_capture_evidence; do
+            psql -v ON_ERROR_STOP=1 -h localhost -U postgres -d test -f "migrations/$f.sql"
+          done
+        env:
+          PGPASSWORD: postgres
 
       - name: Run Playwright E2E tests
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test
           DATABASE_URL_TEST: postgresql://postgres:postgres@localhost:5432/test
           CI: true
+          # Non-secret placeholders, as in .env.development.example
+          ANALYZER_PROVIDER: mock
+          OPENAI_API_KEY: mock-analyzer-no-key-required
         run: pnpm e2e
 
       - name: Upload Playwright HTML report

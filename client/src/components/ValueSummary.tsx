@@ -1,9 +1,12 @@
 import { useState } from "react";
 import type { InventoryItem } from "@shared/schema";
 import {
+  describeAssumptions,
+  ESTIMATE_SCOPE_LABELS,
   formatUsd,
   getIdentificationStatus,
   getValuationView,
+  INDICATIVE_VALUE_NOTE,
   VALUE_STATUS_LABELS,
 } from "@shared/valuation";
 import { Badge } from "@/components/ui/badge";
@@ -36,6 +39,11 @@ export function ValueSummary({ item }: ValueSummaryProps) {
     <div className="space-y-1.5" data-testid={`value-summary-${item.id}`}>
       {valuation && view.status === "estimated" && (
         <div>
+          {view.scope === "category" && (
+            <p className="text-xs text-muted-foreground" data-testid={`text-category-baseline-${item.id}`}>
+              Typical used {item.name.toLowerCase()}, maker unknown
+            </p>
+          )}
           <div className="flex flex-wrap items-baseline gap-x-2">
             <p
               className={cn(
@@ -51,6 +59,9 @@ export function ValueSummary({ item }: ValueSummaryProps) {
             </span>
           </div>
           <div className="mt-1 flex flex-wrap gap-1">
+            <Badge variant="secondary" className="text-xs" data-testid={`badge-scope-${item.id}`}>
+              {ESTIMATE_SCOPE_LABELS[view.scope ?? "unrecorded"]}
+            </Badge>
             <Badge
               variant={valuation.confidence === "high" ? "default" : valuation.confidence === "medium" ? "secondary" : "outline"}
               className="text-xs"
@@ -62,6 +73,16 @@ export function ValueSummary({ item }: ValueSummaryProps) {
               AI judgment
             </Badge>
           </div>
+          {describeAssumptions(valuation.assumptions).length > 0 && (
+            <ul className="mt-1 text-xs text-muted-foreground" data-testid={`list-assumptions-${item.id}`}>
+              {describeAssumptions(valuation.assumptions).map((assumption) => (
+                <li key={assumption}>Assumes: {assumption}</li>
+              ))}
+            </ul>
+          )}
+          <p className="mt-1 text-xs text-muted-foreground" data-testid={`text-indicative-note-${item.id}`}>
+            {INDICATIVE_VALUE_NOTE}
+          </p>
         </div>
       )}
 
