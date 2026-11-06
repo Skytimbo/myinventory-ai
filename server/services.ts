@@ -25,7 +25,6 @@ import type {
 } from "./analyzer";
 import type { IItemService } from "./itemService";
 import { PhotoService } from "./photoService";
-import { openaiCheap, openaiPremium } from "./openai";
 import type {
   BatchContext,
   CaptureBatch,
@@ -194,6 +193,7 @@ export async function createProdServices(
   const { DatabaseStorage } = await import("./storage");
   const { ObjectStorageService } = await import("./objectStorage");
   const { ItemService } = await import("./itemService");
+  const { openaiCheap, openaiPremium } = await import("./openai");
 
   // Instantiate services in dependency order
   const storage = await DatabaseStorage.create();
