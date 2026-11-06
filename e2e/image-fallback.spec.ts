@@ -68,7 +68,7 @@ test.describe('Image Loading Fallback', () => {
 
     // Verify we're on the correct server
     const currentUrl = new URL(page.url());
-    const expectedPort = process.env.CI ? '5000' : '5173';
+    const expectedPort = process.env.CI ? '5100' : '5173';
     expect(currentUrl.port).toBe(expectedPort);
     expect(currentUrl.hostname).toBe('localhost');
 

@@ -11,7 +11,7 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: 'html',
   use: {
-    baseURL: process.env.CI ? 'http://localhost:5000' : 'http://localhost:5173',
+    baseURL: process.env.CI ? 'http://localhost:5100' : 'http://localhost:5173',
     trace: 'on-first-retry',
     video: 'retain-on-failure',
     screenshot: 'only-on-failure',
@@ -24,11 +24,11 @@ export default defineConfig({
     },
   ],
 
-  // CI uses single-server mode (traditional), local uses dual-server mode
+  // CI uses a single server with in-memory services; local uses dual-server mode.
   webServer: process.env.CI
     ? {
-        command: 'PORT=5000 pnpm dev',
-        url: 'http://localhost:5000',
+        command: 'E2E_FAKE_SERVICES=true PORT=5100 pnpm dev',
+        url: 'http://localhost:5100',
         reuseExistingServer: false,
         timeout: 120000,
       }

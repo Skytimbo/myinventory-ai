@@ -608,11 +608,11 @@ export class FakeAnalyzer implements IAnalyzer {
  * Services are fast, deterministic, and require no external dependencies.
  * Ideal for unit tests, integration tests, and E2E tests.
  *
- * @param _config - Validated application configuration (reserved for future use)
+ * @param _config - Optional application configuration (reserved for future use)
  * @returns {AppServices} Container with fake service instances
  */
 export async function createTestServices(
-  _config: AppConfig
+  _config?: AppConfig
 ): Promise<AppServices> {
   const { ItemService } = await import("./itemService");
 

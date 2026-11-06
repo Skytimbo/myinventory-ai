@@ -4,13 +4,18 @@ import express, { type Request, Response, NextFunction } from "express";
 import cors from "cors";
 import session from "express-session";
 import { registerRoutes } from "./routes";
-import { loadAppConfig, createProdServices } from "./services";
+import {
+  loadAppConfig,
+  createProdServices,
+  createTestServices,
+} from "./services";
 import { setupVite, serveStatic, log } from "./vite";
 import { ApiError } from "./errors";
 import { promises as fs } from "fs";
 
 const app = express();
 const isProduction = process.env.NODE_ENV === "production";
+const useE2EFakeServices = process.env.E2E_FAKE_SERVICES === "true";
 
 if (isProduction) {
   app.set("trust proxy", 1);
@@ -96,21 +101,36 @@ app.use((req, res, next) => {
 
 (async () => {
   try {
-    // Load and validate application configuration (PRD 0005)
-    const config = loadAppConfig();
-    log(`🔧 Storage backend: Local filesystem (${config.localStorageDir})`);
-
-    // Ensure local storage directory exists
-    try {
-      await fs.mkdir(config.localStorageDir, { recursive: true });
-      await fs.access(config.localStorageDir);
-      log(`✓ Local storage directory ready: ${config.localStorageDir}`);
-    } catch (error) {
-      log(`⚠️  Warning: Unable to access local storage directory: ${error}`);
+    if (useE2EFakeServices && isProduction) {
+      throw new Error("E2E_FAKE_SERVICES cannot be enabled in production.");
     }
 
-    // Initialize service container (PRD 0005)
-    const services = await createProdServices(config);
+    const services = useE2EFakeServices
+      ? await createTestServices()
+      : await (async () => {
+          // Load and validate application configuration (PRD 0005)
+          const config = loadAppConfig();
+          log(
+            `🔧 Storage backend: Local filesystem (${config.localStorageDir})`
+          );
+
+          // Ensure local storage directory exists
+          try {
+            await fs.mkdir(config.localStorageDir, { recursive: true });
+            await fs.access(config.localStorageDir);
+            log(`✓ Local storage directory ready: ${config.localStorageDir}`);
+          } catch (error) {
+            log(
+              `⚠️  Warning: Unable to access local storage directory: ${error}`
+            );
+          }
+
+          return createProdServices(config);
+        })();
+
+    if (useE2EFakeServices) {
+      log("🧪 E2E harness: using in-memory fake services (no database)");
+    }
 
   // Register routes with injected services (PRD 0005)
   const server = await registerRoutes(app, services);
